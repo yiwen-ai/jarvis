@@ -1,0 +1,24 @@
+env = "test"
+
+[log]
+level = "info" # debug, info, warn, error
+
+[server]
+port = 8080
+cert_file = ""
+key_file = ""
+graceful_shutdown = 3
+
+[scylladb]
+host = "127.0.0.1"
+port = 6379
+username = ""
+password = ""
+max_connections = 10
+
+[azureai]
+resource_name = "yiwen"
+api_key = ""
+api_version = ""
+chat_model = ""
+embedding_model = ""

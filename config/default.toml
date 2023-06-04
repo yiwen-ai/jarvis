@@ -1,0 +1,34 @@
+env = "dev"
+
+[log]
+# Log level: "trace", "debug", "info", "warn", "error"
+level = "info"
+
+[server]
+# The address to bind to.
+port = 8080
+# cert file path to enable https, example: "/etc/https/mydomain.crt"
+cert_file = ""
+# key file path to enable https, example: "/etc/https/mydomain.key"
+key_file = ""
+# The maximum number of seconds to wait for graceful shutdown.
+graceful_shutdown = 10
+
+[scylladb]
+# Redis server address
+host = "127.0.0.1"
+# Redis server port
+port = 6379
+# Redis server username
+username = ""
+# Redis server password
+password = ""
+# The maximum number of connections managed by the pool, should > 0.
+max_connections = 100
+
+[azureai]
+resource_name = "yiwen"
+api_key = ""
+api_version = "2023-05-15"
+chat_model = "gpt-35-turbo"
+embedding_model = "embedding-ada-002"
