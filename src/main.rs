@@ -15,6 +15,7 @@ use tower_http::{
 mod api;
 mod conf;
 mod context;
+mod db;
 mod erring;
 mod json_util;
 mod lang;
@@ -39,9 +40,12 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let ai = openai::OpenAI::new(cfg.azureai);
+    let scylla = db::scylladb::ScyllaDB::new(cfg.scylla).await?;
+
     let app_state = Arc::new(api::AppState {
         ld,
-        ai,
+        ai: ai,
+        scylla: scylla,
         translating: Arc::new("translating".to_string()),
         embedding: Arc::new("embedding".to_string()),
     });
@@ -56,6 +60,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/", get(api::version))
+        .route("/healthz", get(api::healthz))
         .route("/te", post(api::translate_and_embedding))
         .route_layer(mds)
         .with_state(app_state.clone());

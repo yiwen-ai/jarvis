@@ -24,3 +24,5 @@ go.work
 # Added by cargo
 
 /target
+
+config.toml

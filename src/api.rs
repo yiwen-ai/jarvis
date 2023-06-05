@@ -1,17 +1,19 @@
-use axum::{extract::State, response::IntoResponse, Extension, Json};
+use axum::{extract::State, Extension, Json};
 use std::{str::FromStr, sync::Arc};
 
 use crate::context::ReqContext;
+use crate::db;
 use crate::erring::{HTTPError, SuccessResponse};
 use crate::json_util::RawJSON;
 use crate::lang::{Language, LanguageDetector};
-use crate::model::{self, EATSegmenter};
+use crate::model::{self, TESegmenter};
 use crate::openai;
 use crate::tokenizer;
 
 pub struct AppState {
     pub ld: LanguageDetector,
     pub ai: openai::OpenAI,
+    pub scylla: db::scylladb::ScyllaDB,
     pub translating: Arc<String>, // keep the number of concurrent translating tasks
     pub embedding: Arc<String>,   // keep the number of concurrent embedding tasks
 }
@@ -19,22 +21,25 @@ pub struct AppState {
 const APP_NAME: &str = env!("CARGO_PKG_NAME");
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub async fn version(State(app): State<Arc<AppState>>) -> impl IntoResponse {
-    Json(SuccessResponse {
-        result: model::AppInfo {
-            name: APP_NAME.to_string(),
-            version: APP_VERSION.to_string(),
-            translating: Arc::strong_count(&app.translating) - 1,
-            embedding: Arc::strong_count(&app.embedding) - 1,
-        },
+pub async fn version() -> Json<model::AppVersion> {
+    Json(model::AppVersion {
+        name: APP_NAME.to_string(),
+        version: APP_VERSION.to_string(),
+    })
+}
+
+pub async fn healthz(State(app): State<Arc<AppState>>) -> Json<model::AppInfo> {
+    Json(model::AppInfo {
+        translating: Arc::strong_count(&app.translating) - 1,
+        embedding: Arc::strong_count(&app.embedding) - 1,
     })
 }
 
 pub async fn translate_and_embedding(
     State(app): State<Arc<AppState>>,
     Extension(ctx): Extension<Arc<ReqContext>>,
-    Json(input): Json<model::EATInput>,
-) -> Result<Json<SuccessResponse<model::EATOutput>>, HTTPError> {
+    Json(input): Json<model::TEInput>,
+) -> Result<Json<SuccessResponse<model::TEOutput>>, HTTPError> {
     let counter = app.translating.clone();
 
     let target_lang = input.lang.to_lowercase();
@@ -109,9 +114,9 @@ async fn translate(
     did: &str,
     origin_lang: &str,
     target_lang: &str,
-    input: &Vec<model::EATUnit>,
-) -> Result<model::EATOutput, HTTPError> {
-    let mut rt = model::EATOutput {
+    input: &Vec<model::TEUnit>,
+) -> Result<model::TEOutput, HTTPError> {
+    let mut rt = model::TEOutput {
         did: did.to_string(),
         lang: origin_lang.to_string(),
         used_tokens: 0,
@@ -136,11 +141,11 @@ async fn translate(
         let (total_tokens, content) = res.unwrap();
         rt.used_tokens += total_tokens as usize;
 
-        let mut list = serde_json::from_str::<Vec<model::EATContent>>(&content);
+        let mut list = serde_json::from_str::<Vec<model::TEContent>>(&content);
         if list.is_err() {
             match RawJSON::new(&content).fix_me() {
                 Ok(fixed) => {
-                    list = serde_json::from_str::<Vec<model::EATContent>>(&fixed);
+                    list = serde_json::from_str::<Vec<model::TEContent>>(&fixed);
                 }
                 Err(er) => {
                     log::error!(target: "json_parse_error",
@@ -170,9 +175,9 @@ async fn embedding(
     app: Arc<AppState>,
     xid: String,
     user: String,
-    did: String,
-    lang: String,
-    input: Vec<model::EATUnit>,
+    _did: String,
+    _lang: String,
+    input: Vec<model::TEUnit>,
 ) {
     let counter = app.embedding.clone();
     for unit in input {

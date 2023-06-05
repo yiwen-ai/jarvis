@@ -11,42 +11,46 @@ static EMBEDDING_SECTION_TOKENS: usize = 400;
 static EMBEDDING_HIGH_TOKENS: usize = 600;
 
 #[derive(Serialize, Deserialize)]
-pub struct AppInfo {
+pub struct AppVersion {
     pub name: String,
     pub version: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct AppInfo {
     pub translating: usize, // the number of concurrent translating tasks
     pub embedding: usize,   // the number of concurrent embedding tasks
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct EATInput {
+pub struct TEInput {
     pub did: String,  // document id
     pub lang: String, // the target language translate to
 
     #[serde(default)]
     pub model: String,
-    pub content: EATContentList,
+    pub content: TEContentList,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct EATOutput {
+pub struct TEOutput {
     pub did: String,  // document id
     pub lang: String, // the origin language detected.
     pub used_tokens: usize,
-    pub content: EATContentList,
+    pub content: TEContentList,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct EATContent {
+pub struct TEContent {
     pub id: String, // node id in the document
     pub texts: Vec<String>,
 }
 
-pub type EATContentList = Vec<EATContent>;
+pub type TEContentList = Vec<TEContent>;
 
-impl EATContent {
+impl TEContent {
     pub fn to_json_string(&self) -> String {
-        serde_json::to_string(self).expect("EATContent::to_json_string error")
+        serde_json::to_string(self).expect("TEContent::to_json_string error")
     }
 
     pub fn to_embedding_string(&self) -> String {
@@ -66,15 +70,15 @@ impl EATContent {
 }
 
 #[derive(Serialize)]
-pub struct EATUnit {
+pub struct TEUnit {
     index: usize,
     pub tokens: usize,
-    pub content: EATContentList,
+    pub content: TEContentList,
 }
 
-impl EATUnit {
+impl TEUnit {
     pub fn content_to_json_string(&self) -> String {
-        serde_json::to_string(&self.content).expect("EATUnit::content_to_json_string error")
+        serde_json::to_string(&self.content).expect("TEUnit::content_to_json_string error")
     }
 
     pub fn content_to_embedding_string(&self) -> String {
@@ -86,12 +90,12 @@ impl EATUnit {
     }
 }
 
-pub trait EATSegmenter {
+pub trait TESegmenter {
     fn detect_lang_string(&self) -> String;
-    fn segment(&self, tokens_len: fn(&str) -> usize, for_embedding: bool) -> Vec<EATUnit>;
+    fn segment(&self, tokens_len: fn(&str) -> usize, for_embedding: bool) -> Vec<TEUnit>;
 }
 
-impl EATSegmenter for EATContentList {
+impl TESegmenter for TEContentList {
     fn detect_lang_string(&self) -> String {
         let mut detect_lang = String::new();
 
@@ -104,9 +108,9 @@ impl EATSegmenter for EATContentList {
         detect_lang
     }
 
-    fn segment(&self, tokens_len: fn(&str) -> usize, for_embedding: bool) -> Vec<EATUnit> {
-        let mut list: Vec<EATUnit> = Vec::new();
-        let mut unit: EATUnit = EATUnit {
+    fn segment(&self, tokens_len: fn(&str) -> usize, for_embedding: bool) -> Vec<TEUnit> {
+        let mut list: Vec<TEUnit> = Vec::new();
+        let mut unit: TEUnit = TEUnit {
             index: 0,
             tokens: 0,
             content: Vec::new(),
@@ -130,7 +134,7 @@ impl EATSegmenter for EATContentList {
                     // segment embedding content by section separator
                     if unit.tokens > section_tokens && unit.index >= list.len() {
                         list.push(unit);
-                        unit = EATUnit {
+                        unit = TEUnit {
                             index: list.len(),
                             tokens: 0,
                             content: Vec::new(),
@@ -151,7 +155,7 @@ impl EATSegmenter for EATContentList {
                 unit.tokens += ctl;
                 unit.content.push(c.clone());
                 list.push(unit);
-                unit = EATUnit {
+                unit = TEUnit {
                     index: list.len(),
                     tokens: 0,
                     content: Vec::new(),

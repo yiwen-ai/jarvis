@@ -1,4 +1,4 @@
-env = "dev"
+env = "dev" # "test", "dev", "prod"
 
 [log]
 # Log level: "trace", "debug", "info", "warn", "error"
@@ -14,17 +14,15 @@ key_file = ""
 # The maximum number of seconds to wait for graceful shutdown.
 graceful_shutdown = 10
 
-[scylladb]
-# Redis server address
-host = "127.0.0.1"
-# Redis server port
-port = 6379
-# Redis server username
+[scylla]
+# Scylla server nodes
+nodes = ["127.0.0.1:9042"]
+# Scylla server username
 username = ""
-# Redis server password
+# Scylla server password
 password = ""
-# The maximum number of connections managed by the pool, should > 0.
-max_connections = 100
+
+[qdrant]
 
 [azureai]
 resource_name = "yiwen"

@@ -16,11 +16,9 @@ pub struct Server {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ScyllaDB {
-    pub host: String,
-    pub port: u16,
+    pub nodes: Vec<String>,
     pub username: String,
     pub password: String,
-    pub max_connections: u16,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -37,7 +35,7 @@ pub struct Conf {
     pub env: String,
     pub log: Log,
     pub server: Server,
-    pub scylladb: ScyllaDB,
+    pub scylla: ScyllaDB,
     pub azureai: AzureAI,
 }
 

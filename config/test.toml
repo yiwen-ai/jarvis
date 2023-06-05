@@ -9,12 +9,12 @@ cert_file = ""
 key_file = ""
 graceful_shutdown = 3
 
-[scylladb]
-host = "127.0.0.1"
-port = 6379
+[scylla]
+nodes = ["127.0.0.1:9042"]
 username = ""
 password = ""
-max_connections = 10
+
+[qdrant]
 
 [azureai]
 resource_name = "yiwen"

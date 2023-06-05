@@ -16,7 +16,7 @@ impl RawJSON {
         }
     }
 
-    // 用于尝试修复 OpenAI translate 返回的 JSON String 无法解析 Vec<model::EATContent> 的问题
+    // 用于尝试修复 OpenAI translate 返回的 JSON String 无法解析 Vec<model::TEContent> 的问题
     // 仅需支持 array、object 和 string
     pub fn fix_me(mut self) -> Result<String, String> {
         self.skip_space();
