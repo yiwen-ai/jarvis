@@ -129,8 +129,8 @@ async fn translate(
             .translate(
                 xid,
                 user,
-                &origin_lang,
-                &target_lang,
+                origin_lang,
+                target_lang,
                 &unit.content_to_json_string(),
             )
             .await;

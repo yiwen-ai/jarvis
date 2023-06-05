@@ -57,8 +57,8 @@ impl TEContent {
         let mut tes = String::new();
         for t in &self.texts {
             for s in t.split_whitespace() {
-                if s.len() > 0 {
-                    if tes.len() > 0 {
+                if !s.is_empty() {
+                    if !tes.is_empty() {
                         tes.push(' ');
                     }
                     tes.push_str(s);
@@ -129,7 +129,7 @@ impl TESegmenter for TEContentList {
         };
 
         for c in self {
-            if c.texts.len() == 0 {
+            if c.texts.is_empty() {
                 if c.id == SECTION_SEPARATOR {
                     // segment embedding content by section separator
                     if unit.tokens > section_tokens && unit.index >= list.len() {

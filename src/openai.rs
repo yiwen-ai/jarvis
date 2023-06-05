@@ -206,7 +206,7 @@ impl OpenAI {
 
         if status == 200 {
             let rt = serde_json::from_str::<CreateChatCompletionResponse>(&body)?;
-            if rt.choices.len() > 0 {
+            if !rt.choices.is_empty() {
                 let choice = &rt.choices[0];
                 match choice.finish_reason.as_ref().map_or("stop", |s| s.as_str()) {
                     "stop" => {
@@ -290,7 +290,7 @@ impl OpenAI {
 
         if status == 200 {
             let rt = serde_json::from_str::<CreateEmbeddingResponse>(&body)?;
-            if rt.data.len() > 0 {
+            if !rt.data.is_empty() {
                 return Ok(rt);
             }
 

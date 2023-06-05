@@ -44,8 +44,8 @@ async fn main() -> anyhow::Result<()> {
 
     let app_state = Arc::new(api::AppState {
         ld,
-        ai: ai,
-        scylla: scylla,
+        ai,
+        scylla,
         translating: Arc::new("translating".to_string()),
         embedding: Arc::new("embedding".to_string()),
     });

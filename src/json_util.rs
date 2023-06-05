@@ -10,7 +10,7 @@ impl RawJSON {
         let cap = s.len();
         let data: Vec<char> = s.chars().collect();
         Self {
-            data: data,
+            data,
             offset: 0,
             result: String::with_capacity(cap),
         }
@@ -56,7 +56,7 @@ impl RawJSON {
             ));
         }
 
-        return Ok(self.result);
+        Ok(self.result)
     }
 
     fn skip_space(&mut self) {
@@ -132,7 +132,7 @@ impl RawJSON {
             }
         }
 
-        return Some("no token to finish array".to_string());
+        Some("no token to finish array".to_string())
     }
 
     fn object(&mut self) -> Option<String> {
@@ -241,7 +241,7 @@ impl RawJSON {
             }
         }
 
-        return Some("no char to scan in object".to_string());
+        Some("no char to scan in object".to_string())
     }
 
     fn can_not_end_text(&self) -> bool {
@@ -270,7 +270,7 @@ impl RawJSON {
                 }
             }
         }
-        return false;
+        false
     }
 
     fn key(&mut self) -> Option<String> {
@@ -291,7 +291,7 @@ impl RawJSON {
             }
         }
 
-        return Some("no token to finish object key".to_string());
+        Some("no token to finish object key".to_string())
     }
 
     fn text(&mut self) -> Option<String> {
@@ -352,7 +352,7 @@ impl RawJSON {
             }
         }
 
-        return Some("no token to finish text".to_string());
+        Some("no token to finish text".to_string())
     }
 }
 

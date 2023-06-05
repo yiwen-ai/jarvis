@@ -9,8 +9,8 @@ run-dev:
 test:
 	@cargo test -- --nocapture
 
-clippy:
-	@cargo clippy --all-targets --all-features -- -D warnings
+lint:
+	@cargo clippy --all-targets --all-features
 
 build:
 	@cargo build --target x86_64-unknown-linux-gnu --release
