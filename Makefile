@@ -12,6 +12,9 @@ test:
 lint:
 	@cargo clippy --all-targets --all-features
 
+fix:
+	@cargo clippy --fix --bin "jarvis" --tests
+
 build:
 	@cargo build --target x86_64-unknown-linux-gnu --release
 	@cargo build --target aarch64-unknown-linux-gnu --release

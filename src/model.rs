@@ -10,6 +10,10 @@ static TRANSLATE_HIGH_TOKENS: usize = 2000;
 static EMBEDDING_SECTION_TOKENS: usize = 400;
 static EMBEDDING_HIGH_TOKENS: usize = 600;
 
+pub trait Validator {
+    fn validate(&self) -> Option<String>;
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct AppVersion {
     pub name: String,
@@ -18,18 +22,48 @@ pub struct AppVersion {
 
 #[derive(Serialize, Deserialize)]
 pub struct AppInfo {
-    pub translating: usize, // the number of concurrent translating tasks
-    pub embedding: usize,   // the number of concurrent embedding tasks
+    pub tokio_translating_tasks: i64, // the number of concurrent translating tasks
+    pub tokio_embedding_tasks: i64,   // the number of concurrent embedding tasks
+
+    // https://docs.rs/scylla/latest/scylla/struct.Metrics.html
+    pub scylla_latency_avg_ms: u64,
+    pub scylla_latency_p99_ms: u64,
+    pub scylla_latency_p90_ms: u64,
+    pub scylla_errors_num: u64,
+    pub scylla_queries_num: u64,
+    pub scylla_errors_iter_num: u64,
+    pub scylla_queries_iter_num: u64,
+    pub scylla_retries_num: u64,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct TEInput {
     pub did: String,  // document id
     pub lang: String, // the target language translate to
+    pub version: u16, // should <= i16::MAX
 
     #[serde(default)]
     pub model: String,
+    #[serde(default)]
     pub content: TEContentList,
+}
+
+impl Validator for TEInput {
+    fn validate(&self) -> Option<String> {
+        if self.did.is_empty() {
+            return Some("invalid document id".to_string());
+        }
+
+        if self.lang.is_empty() {
+            return Some("invalid target language".to_string());
+        }
+
+        if self.version == 0 || self.version > i16::MAX as u16 {
+            return Some(format!("invalid version {}", self.version));
+        }
+
+        None
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -40,7 +74,7 @@ pub struct TEOutput {
     pub content: TEContentList,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TEContent {
     pub id: String, // node id in the document
     pub texts: Vec<String>,
@@ -77,6 +111,14 @@ pub struct TEUnit {
 }
 
 impl TEUnit {
+    pub fn ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = Vec::with_capacity(self.content.len());
+        for c in &self.content {
+            ids.push(c.id.clone());
+        }
+        ids
+    }
+
     pub fn content_to_json_string(&self) -> String {
         serde_json::to_string(&self.content).expect("TEUnit::content_to_json_string error")
     }

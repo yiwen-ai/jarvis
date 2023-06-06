@@ -1,4 +1,4 @@
-env = "dev" # "test", "dev", "prod"
+env = "test" # "test", "dev", "prod"
 
 [log]
 # Log level: "trace", "debug", "info", "warn", "error"

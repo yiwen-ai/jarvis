@@ -33,14 +33,20 @@ async fn main() -> anyhow::Result<()> {
 
     log::debug!("{:?}", cfg);
 
-    let ld = if cfg.env == "dev" {
-        lang::LanguageDetector::new_dev()
-    } else {
+    let ld = if cfg.env == "prod" {
         lang::LanguageDetector::new()
+    } else {
+        lang::LanguageDetector::new_dev()
     };
 
     let ai = openai::OpenAI::new(cfg.azureai);
-    let scylla = db::scylladb::ScyllaDB::new(cfg.scylla).await?;
+
+    let keyspace = if cfg.env == "test" {
+        "jarvis_test"
+    } else {
+        "jarvis"
+    };
+    let scylla = db::scylladb::ScyllaDB::new(cfg.scylla, keyspace).await?;
 
     let app_state = Arc::new(api::AppState {
         ld,
@@ -62,11 +68,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/", get(api::version))
         .route("/healthz", get(api::healthz))
         .route("/te", post(api::translate_and_embedding))
+        .route("/translating:get", post(api::get_translating))
         .route_layer(mds)
         .with_state(app_state.clone());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], cfg.server.port));
-    log::info!("Javis start at {}", &addr);
+    log::info!("Javis start {} at {}", cfg.env, &addr);
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
         .with_graceful_shutdown(shutdown_signal(

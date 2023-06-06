@@ -5,8 +5,8 @@ use crate::context::ReqContext;
 use crate::db;
 use crate::erring::{HTTPError, SuccessResponse};
 use crate::json_util::RawJSON;
-use crate::lang::{Language, LanguageDetector};
-use crate::model::{self, TESegmenter};
+use crate::lang::{normalize_lang, Language, LanguageDetector};
+use crate::model::{self, TESegmenter, Validator};
 use crate::openai;
 use crate::tokenizer;
 
@@ -21,6 +21,8 @@ pub struct AppState {
 const APP_NAME: &str = env!("CARGO_PKG_NAME");
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+static JARVIS: &str = "jarvis00000000000000";
+
 pub async fn version() -> Json<model::AppVersion> {
     Json(model::AppVersion {
         name: APP_NAME.to_string(),
@@ -29,10 +31,65 @@ pub async fn version() -> Json<model::AppVersion> {
 }
 
 pub async fn healthz(State(app): State<Arc<AppState>>) -> Json<model::AppInfo> {
+    let m = app.scylla.metrics();
     Json(model::AppInfo {
-        translating: Arc::strong_count(&app.translating) - 1,
-        embedding: Arc::strong_count(&app.embedding) - 1,
+        tokio_translating_tasks: Arc::strong_count(&app.translating) as i64 - 1,
+        tokio_embedding_tasks: Arc::strong_count(&app.embedding) as i64 - 1,
+        scylla_latency_avg_ms: m.get_latency_avg_ms().unwrap_or(0),
+        scylla_latency_p99_ms: m.get_latency_percentile_ms(99.0f64).unwrap_or(0),
+        scylla_latency_p90_ms: m.get_latency_percentile_ms(90.0f64).unwrap_or(0),
+        scylla_errors_num: m.get_errors_num(),
+        scylla_queries_num: m.get_queries_num(),
+        scylla_errors_iter_num: m.get_errors_iter_num(),
+        scylla_queries_iter_num: m.get_queries_iter_num(),
+        scylla_retries_num: m.get_retries_num(),
     })
+}
+
+pub async fn get_translating(
+    State(app): State<Arc<AppState>>,
+    Json(input): Json<model::TEInput>,
+) -> Result<Json<SuccessResponse<model::TEOutput>>, HTTPError> {
+    if let Some(err) = input.validate() {
+        return Err(HTTPError {
+            code: 400,
+            message: err,
+            data: None,
+        });
+    }
+
+    let did = xid::Id::from_str(&input.did).map_err(|e| HTTPError {
+        code: 400,
+        message: format!("parse document id error: {}", e),
+        data: None,
+    })?;
+
+    let lang = normalize_lang(&input.lang);
+    if Language::from_str(&lang).is_err() {
+        return Err(HTTPError {
+            code: 400,
+            message: format!("unsupported language '{}'", &lang),
+            data: None,
+        });
+    }
+
+    let mut doc = db::Translating::new(did, lang.clone(), input.version as i16);
+    doc.fill(&app.scylla, vec![])
+        .await
+        .map_err(HTTPError::from)?;
+
+    let content: model::TEContentList = doc
+        .columns
+        .get_from_cbor("content")
+        .map_err(HTTPError::from)?;
+    let res = model::TEOutput {
+        did: did.to_string(),
+        lang: lang.clone(),
+        used_tokens: 0,
+        content: content,
+    };
+
+    Ok(Json(SuccessResponse { result: res }))
 }
 
 pub async fn translate_and_embedding(
@@ -40,13 +97,34 @@ pub async fn translate_and_embedding(
     Extension(ctx): Extension<Arc<ReqContext>>,
     Json(input): Json<model::TEInput>,
 ) -> Result<Json<SuccessResponse<model::TEOutput>>, HTTPError> {
-    let counter = app.translating.clone();
+    if let Some(err) = input.validate() {
+        return Err(HTTPError {
+            code: 400,
+            message: err,
+            data: None,
+        });
+    }
 
-    let target_lang = input.lang.to_lowercase();
+    let did = xid::Id::from_str(&input.did).map_err(|e| HTTPError {
+        code: 400,
+        message: format!("parse document id error: {}", e),
+        data: None,
+    })?;
+    let uid = xid::Id::from_str(&ctx.user).unwrap_or(xid::Id::from_str(JARVIS).unwrap());
+
+    let target_lang = normalize_lang(&input.lang);
     if Language::from_str(&target_lang).is_err() {
         return Err(HTTPError {
             code: 400,
-            message: format!("Unsupported language '{}' to translate", &target_lang),
+            message: format!("unsupported language '{}' to translate", &target_lang),
+            data: None,
+        });
+    }
+
+    if input.content.is_empty() {
+        return Err(HTTPError {
+            code: 400,
+            message: "empty content to translate".to_string(),
             data: None,
         });
     }
@@ -63,32 +141,61 @@ pub async fn translate_and_embedding(
         });
     }
 
+    let tokio_translating = app.translating.clone();
     let translate_input = input.content.segment(tokenizer::tokens_len, false);
 
     let res = translate(
         app.clone(),
-        &ctx.xid,
+        &ctx.rid,
         &ctx.user,
         &input.did,
         &origin_lang,
         &target_lang,
         &translate_input,
     )
-    .await;
+    .await?;
 
-    if res.is_err() {
-        return Err(res.err().unwrap());
-    }
+    let mut user_counter = db::Counter::new(uid);
+    let _ = user_counter
+        .incr_translating(&app.scylla, res.used_tokens as i64)
+        .await;
 
-    let res = res.ok().unwrap();
+    // save origin lang doc to db
+    let mut origin_doc = db::Translating::new(did, origin_lang.clone(), input.version as i16);
+    origin_doc.columns.set_ascii("user", &uid.to_string());
+    origin_doc
+        .columns
+        .set_in_cbor("content", &input.content)
+        .map_err(HTTPError::from)?;
+
+    origin_doc
+        .save(&app.scylla)
+        .await
+        .map_err(HTTPError::from)?;
+
+    // save target lang doc to db
+    let mut target_doc = db::Translating::new(did, target_lang.clone(), input.version as i16);
+    target_doc.columns.set_ascii("user", &uid.to_string());
+    target_doc
+        .columns
+        .append_map_i32("tokens", "gpt3.5", res.used_tokens as i32);
+    target_doc
+        .columns
+        .set_in_cbor("content", &res.content)
+        .map_err(HTTPError::from)?;
+
+    target_doc
+        .save(&app.scylla)
+        .await
+        .map_err(HTTPError::from)?;
 
     // start embedding in the background immediately.
     let origin_embedding_input = input.content.segment(tokenizer::tokens_len, true);
     tokio::spawn(embedding(
         app.clone(),
-        ctx.xid.clone(),
+        ctx.rid.clone(),
         ctx.user.clone(),
-        input.did.clone(),
+        did,
         origin_lang.clone(),
         origin_embedding_input,
     ));
@@ -96,20 +203,20 @@ pub async fn translate_and_embedding(
     let target_embedding_input = res.content.segment(tokenizer::tokens_len, true);
     tokio::spawn(embedding(
         app.clone(),
-        ctx.xid.clone(),
+        ctx.rid.clone(),
         ctx.user.clone(),
-        input.did.clone(),
+        did,
         target_lang.clone(),
         target_embedding_input,
     ));
 
-    let _ = counter.as_str(); // avoid unused warning
+    let _ = tokio_translating.as_str(); // avoid unused warning
     Ok(Json(SuccessResponse { result: res }))
 }
 
 async fn translate(
     app: Arc<AppState>,
-    xid: &str,
+    rid: &str,
     user: &str,
     did: &str,
     origin_lang: &str,
@@ -127,7 +234,7 @@ async fn translate(
         let res = app
             .ai
             .translate(
-                xid,
+                rid,
                 user,
                 origin_lang,
                 target_lang,
@@ -146,11 +253,25 @@ async fn translate(
             match RawJSON::new(&content).fix_me() {
                 Ok(fixed) => {
                     list = serde_json::from_str::<Vec<model::TEContent>>(&fixed);
+                    log::info!(target: "translating",
+                        action = "fix_json",
+                        rid = rid,
+                        user = user,
+                        did = did,
+                        origin_lang = origin_lang,
+                        target_lang = target_lang;
+                        "",
+                    );
                 }
                 Err(er) => {
-                    log::error!(target: "json_parse_error",
-                        xid = xid,
-                        origin = &content;
+                    log::error!(target: "translating",
+                        action = "parse_error",
+                        rid = rid,
+                        user = user,
+                        did = did,
+                        origin_lang = origin_lang,
+                        target_lang = target_lang,
+                        content = &content;
                         "{}", &er,
                     );
                 }
@@ -173,26 +294,84 @@ async fn translate(
 
 async fn embedding(
     app: Arc<AppState>,
-    xid: String,
+    rid: String,
     user: String,
-    _did: String,
-    _lang: String,
+    did: xid::Id,
+    lang: String,
     input: Vec<model::TEUnit>,
 ) {
-    let counter = app.embedding.clone();
+    let mut total_tokens: i64 = 0;
+    let tokio_embedding = app.embedding.clone();
     for unit in input {
         let res = app
             .ai
-            .embedding(&xid, &user, &unit.content_to_embedding_string())
+            .embedding(&rid, &user, &unit.content_to_embedding_string())
             .await;
         if res.is_err() {
+            log::warn!(target: "embedding",
+                action = "call_openai",
+                rid = &rid,
+                user = &user,
+                did = did.to_string(),
+                lang = &lang;
+                "{}", res.err().unwrap(),
+            );
             return;
         }
 
-        let (total_tokens, embeddings) = res.unwrap();
-        // save to db
-        println!("EMBD: {}, {:?}", total_tokens, embeddings)
+        let (used_tokens, embeddings) = res.unwrap();
+        total_tokens += used_tokens as i64;
+        // save target lang content embedding to db
+        let mut content_embedding = db::Embedding::new(did, lang.clone(), unit.ids());
+        content_embedding.columns.set_ascii("user", &user);
+        content_embedding.columns.set_ascii("lang", &lang);
+        content_embedding
+            .columns
+            .append_map_i32("tokens", "ada2", used_tokens as i32);
+
+        if let Err(err) = content_embedding
+            .columns
+            .set_in_cbor("content", &unit.content)
+        {
+            log::warn!(target: "embedding",
+                action = "set_cbor",
+                rid = &rid,
+                user = &user,
+                did = did.to_string(),
+                lang = &lang;
+                "{}", err,
+            );
+            return;
+        }
+
+        content_embedding.columns.set_list_f32("ada2", &embeddings);
+        if let Err(err) = content_embedding.save(&app.scylla).await {
+            log::warn!(target: "embedding",
+                action = "save_db",
+                rid = &rid,
+                user = &user,
+                did = did.to_string(),
+                lang = &lang;
+                "{}", err,
+            );
+            return;
+        }
+
+        log::info!(target: "embedding",
+            action = "finish_embedding",
+            rid = &rid,
+            user = &user,
+            did = did.to_string(),
+            lang = &lang,
+            used_tokens = used_tokens,
+            ids = log::as_serde!(unit.ids());
+            "",
+        );
     }
 
-    let _ = counter.as_str(); // avoid unused warning
+    let uid = xid::Id::from_str(&user).unwrap_or(xid::Id::from_str(JARVIS).unwrap());
+    let mut user_counter = db::Counter::new(uid);
+    let _ = user_counter.incr_embedding(&app.scylla, total_tokens).await;
+
+    let _ = tokio_embedding.as_str(); // avoid unused warning
 }

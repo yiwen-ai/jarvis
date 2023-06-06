@@ -23,6 +23,8 @@ axum = { version = "0.6", features = [
   "tower-log",
   "query",
 ], default-features = false }
+ciborium = "0.2.1"
+ciborium-io = "0.2.1"
 config = "0.13"
 futures-util = "0.3"
 hyper = "0.14"

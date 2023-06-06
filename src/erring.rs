@@ -8,12 +8,11 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Serialize, Debug, Clone)]
 pub struct HTTPError {
     pub code: u16,
     pub message: String,
-    pub data: Option<serde_json::value::Value>,
+    pub data: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]
