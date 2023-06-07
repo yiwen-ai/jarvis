@@ -23,6 +23,8 @@ username = ""
 password = ""
 
 [qdrant]
+url = "http://127.0.0.1:6334"
+api_key = ""
 
 [azureai]
 resource_name = "yiwen"

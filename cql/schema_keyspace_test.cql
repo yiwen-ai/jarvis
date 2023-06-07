@@ -17,14 +17,15 @@ CREATE TABLE IF NOT EXISTS jarvis_test.counter
 
 CREATE TABLE IF NOT EXISTS jarvis_test.translating (
     did     BLOB,
-    lang    ASCII,
     ver     SMALLINT,
+    lang    ASCII,
     user    ASCII,
     tokens  MAP<ASCII, INT>,
     content BLOB,
     gpt4    BlOB,
-    PRIMARY KEY (did, lang, ver)
-) WITH caching = {'enabled': 'true'}
+    PRIMARY KEY (did, ver, lang)
+) WITH CLUSTERING ORDER BY (ver DESC)
+    AND caching = {'enabled': 'true'}
     AND comment = 'document translating'
     AND compaction = {'class': 'SizeTieredCompactionStrategy'}
     AND compression = {'sstable_compression': 'LZ4Compressor'}
@@ -32,13 +33,14 @@ CREATE TABLE IF NOT EXISTS jarvis_test.translating (
 
 CREATE TABLE IF NOT EXISTS jarvis_test.embedding (
     did     BLOB,
+    crc     BLOB,
     lang    ASCII,
-    ids     FROZEN<LIST<ASCII>>,
     user    ASCII,
     tokens  MAP<ASCII, INT>,
+    ids     ASCII,
     content BLOB,
     ada2    LIST<FLOAT>,
-    PRIMARY KEY (did, lang, ids)
+    PRIMARY KEY (did, crc)
 ) WITH caching = {'enabled': 'true'}
     AND comment = 'content embedding'
     AND compaction = {'class': 'SizeTieredCompactionStrategy'}

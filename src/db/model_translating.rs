@@ -1,27 +1,21 @@
 use super::{scylladb, scylladb::CqlValue, ToAnyhowError};
 
-// did     BLOB,             # document id, 12 bytes, https://docs.rs/xid/latest/xid/
-// lang    ASCII,            # document language
-// ver     SMALLINT,         # document version by language
-// user    ASCII,
-// tokens  MAP<ASCII, INT>,  # tokens uåsed, example: {"gpt3": 1299}, gpt3 is gpt-3.5-turbo
-// content BLOB,             # a well processed content list, from client input or default GPT model, gpt3.
-// gpt4    BLOB              # optional content list, from GPT-4 model, gpt4.
+// TABLE: jarvis.counter
 #[derive(Debug, PartialEq)]
 pub struct Translating {
     pub did: xid::Id,
-    pub lang: String,
     pub ver: i16,
+    pub lang: String,
 
     pub columns: scylladb::ColumnsMap,
 }
 
 impl Translating {
-    pub fn new(did: xid::Id, lang: String, ver: i16) -> Self {
+    pub fn new(did: xid::Id, ver: i16, lang: String) -> Self {
         Self {
             did,
-            lang,
             ver,
+            lang,
             columns: scylladb::ColumnsMap::new(),
         }
     }
@@ -38,10 +32,10 @@ impl Translating {
         };
 
         let query = format!(
-            "SELECT {} FROM translating WHERE did=? AND lang=? AND ver=? LIMIT 1",
+            "SELECT {} FROM translating WHERE did=? AND ver=? AND lang=? LIMIT 1",
             fields.join(",")
         );
-        let params = (self.did.as_bytes().to_vec(), &self.lang, self.ver);
+        let params = (self.did.as_bytes(), self.ver, &self.lang);
         let res = db.execute(query, params).await?.single_row();
 
         if let Err(err) = res {
@@ -54,11 +48,11 @@ impl Translating {
 
     pub async fn save(&self, db: &scylladb::ScyllaDB) -> anyhow::Result<()> {
         let tokens = CqlValue::Map(Vec::new());
-        let query = "INSERT INTO translating (did,lang,ver,user,tokens,content) VALUES (?,?,?,?,?,?) USING TTL 0";
+        let query = "INSERT INTO translating (did,ver,lang,user,tokens,content) VALUES (?,?,?,?,?,?) USING TTL 0";
         let params = (
-            self.did.as_bytes().to_vec(),
-            &self.lang,
+            self.did.as_bytes(),
             self.ver,
+            &self.lang,
             self.columns
                 .get("user")
                 .ok_or(anyhow::anyhow!("user not found"))?,
@@ -98,7 +92,7 @@ mod tests {
         let db = DB.get_or_init(get_db).await;
         let did = xid::new();
         let uid = xid::Id::from_str("jarvis00000000000000").unwrap();
-        let mut doc = Translating::new(did, "English".to_string(), 1);
+        let mut doc = Translating::new(did, 1, "English".to_string());
 
         let res = doc.fill(db, vec![]).await;
         assert!(res.is_err());
@@ -117,7 +111,7 @@ mod tests {
 
         doc.save(db).await.unwrap();
 
-        let mut doc2 = Translating::new(did, "English".to_string(), 1);
+        let mut doc2 = Translating::new(did, 1, "English".to_string());
         doc2.fill(db, vec![]).await.unwrap();
 
         assert_eq!(
@@ -128,7 +122,7 @@ mod tests {
 
         assert_eq!(content2, content);
 
-        let mut doc3 = Translating::new(did, "English".to_string(), 1);
+        let mut doc3 = Translating::new(did, 1, "English".to_string());
         doc3.fill(db, vec!["content"]).await.unwrap();
         assert!(!doc3.columns.has("user"));
         assert!(!doc3.columns.has("tokens"));

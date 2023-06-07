@@ -48,10 +48,13 @@ async fn main() -> anyhow::Result<()> {
     };
     let scylla = db::scylladb::ScyllaDB::new(cfg.scylla, keyspace).await?;
 
+    let qdrant = db::qdrant::Qdrant::new(cfg.qdrant, keyspace).await?;
+
     let app_state = Arc::new(api::AppState {
         ld,
         ai,
         scylla,
+        qdrant,
         translating: Arc::new("translating".to_string()),
         embedding: Arc::new("embedding".to_string()),
     });
@@ -69,6 +72,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/healthz", get(api::healthz))
         .route("/te", post(api::translate_and_embedding))
         .route("/translating:get", post(api::get_translating))
+        .route("/search", post(api::search_content))
         .route_layer(mds)
         .with_state(app_state.clone());
 

@@ -1,28 +1,78 @@
-use super::{scylladb, scylladb::CqlValue, ToAnyhowError};
+use std::collections::HashMap;
 
-// did     BLOB,                # document id, 12 bytes, https://docs.rs/xid/latest/xid/
-// lang    ASCII,               # document language
-// ids     FROZEN<LIST<ASCII>>, # content's nodes ids list
-// user    ASCII,
-// tokens  MAP<ASCII, INT>,     # tokens uåsed, example: {"ada2": 299}, ada2 is text-embedding-ada-002
-// content BLOB,                # a well processed and segmented content list for embedding in CBOR format
-// ada2    LIST<FLOAT>          # embedding by text-embedding-ada-002, 1536 dimensions
+use super::{qdrant, scylladb, scylladb::CqlValue, ToAnyhowError};
+
+// TABLE: jarvis.embedding
 pub struct Embedding {
     pub did: xid::Id,
-    pub lang: String,
-    pub ids: Vec<String>,
+    pub crc: [u8; 4],
 
     pub columns: scylladb::ColumnsMap,
 }
 
 impl Embedding {
-    pub fn new(did: xid::Id, lang: String, ids: Vec<String>) -> Self {
+    pub fn new(did: xid::Id, crc: [u8; 4]) -> Self {
         Self {
             did,
-            lang,
-            ids,
+            crc,
             columns: scylladb::ColumnsMap::new(),
         }
+    }
+
+    pub fn from(did: xid::Id, lang: &str, ids: &str) -> Self {
+        let crc: [u8; 4] = crc32fast::hash(format!("{}:{}", lang, ids).as_bytes()).to_be_bytes();
+        let mut doc = Self::new(did, crc);
+        doc.columns.set_ascii("lang", lang);
+        doc.columns.set_ascii("ids", ids);
+        doc
+    }
+
+    pub fn from_uuid(id: uuid::Uuid) -> Self {
+        let data = id.as_bytes();
+        let mut did = [0_u8; 12];
+        let mut crc = [0_u8; 4];
+        did.copy_from_slice(&data[..12]);
+        crc.copy_from_slice(&data[12..]);
+        Self::new(xid::Id(did), crc)
+    }
+
+    // uuid v8
+    pub fn uuid(&self) -> uuid::Uuid {
+        let mut buf: uuid::Bytes = [0_u8; 16];
+        buf[..12].copy_from_slice(self.did.as_bytes());
+        buf[12..].copy_from_slice(&self.crc);
+        uuid::Uuid::from_bytes(buf)
+    }
+
+    pub fn qdrant_point(&self) -> qdrant::PointStruct {
+        let mut point = qdrant::PointStruct {
+            id: Some(qdrant::PointId::from(self.uuid().to_string())),
+            vectors: None,
+            payload: HashMap::new(),
+        };
+
+        point
+            .payload
+            .insert("did".to_string(), qdrant::Value::from(self.did.to_string()));
+        if let Ok(user) = self.columns.get_as::<String>("user") {
+            point
+                .payload
+                .insert("user".to_string(), qdrant::Value::from(user));
+        }
+        if let Ok(lang) = self.columns.get_as::<String>("lang") {
+            point
+                .payload
+                .insert("lang".to_string(), qdrant::Value::from(lang));
+        }
+        if let Ok(ids) = self.columns.get_as::<String>("ids") {
+            point
+                .payload
+                .insert("ids".to_string(), qdrant::Value::from(ids));
+        }
+        if let Ok(vectors) = self.columns.get_as::<Vec<f32>>("ada2") {
+            point.vectors = Some(qdrant::Vectors::from(vectors))
+        }
+        point
     }
 
     pub async fn fill(
@@ -37,10 +87,10 @@ impl Embedding {
         };
 
         let query = format!(
-            "SELECT {} FROM embedding WHERE did=? AND lang=? AND ids=? LIMIT 1",
+            "SELECT {} FROM embedding WHERE did=? AND crc=? LIMIT 1",
             fields.join(",")
         );
-        let params = (self.did.as_bytes().to_vec(), &self.lang, &self.ids);
+        let params = (self.did.as_bytes(), &self.crc);
         let res = db.execute(query, params).await?.single_row();
 
         if let Err(err) = res {
@@ -53,15 +103,20 @@ impl Embedding {
 
     pub async fn save(&self, db: &scylladb::ScyllaDB) -> anyhow::Result<()> {
         let tokens = CqlValue::Map(Vec::new());
-        let query = "INSERT INTO embedding (did,lang,ids,user,tokens,content,ada2) VALUES (?,?,?,?,?,?,?) USING TTL 0";
+        let query = "INSERT INTO embedding (did,crc,lang,user,tokens,ids,content,ada2) VALUES (?,?,?,?,?,?,?,?) USING TTL 0";
         let params = (
-            self.did.as_bytes().to_vec(),
-            &self.lang,
-            &self.ids,
+            self.did.as_bytes(),
+            self.crc,
+            self.columns
+                .get("lang")
+                .ok_or(anyhow::anyhow!("lang not found"))?,
             self.columns
                 .get("user")
                 .ok_or(anyhow::anyhow!("user not found"))?,
             self.columns.get("tokens").unwrap_or(&tokens),
+            self.columns
+                .get("ids")
+                .ok_or(anyhow::anyhow!("ids not found"))?,
             self.columns
                 .get("content")
                 .ok_or(anyhow::anyhow!("content not found"))?,
@@ -75,7 +130,7 @@ impl Embedding {
     }
 
     pub fn get_fields() -> Vec<&'static str> {
-        vec!["user", "tokens", "content", "ada2"]
+        vec!["lang", "user", "tokens", "ids", "content", "ada2"]
     }
 }
 
@@ -99,8 +154,16 @@ mod tests {
     async fn embedding_model_works() {
         let db = DB.get_or_init(get_db).await;
         let did = xid::new();
+        let lang = "English";
+        let ids = "abcdef";
         let uid = xid::Id::from_str("jarvis00000000000000").unwrap();
-        let mut doc = Embedding::new(did, "English".to_string(), vec!["abcdef".to_string()]);
+        let mut doc = Embedding::from(did, lang, ids);
+
+        let t_uuid = doc.uuid();
+        println!("doc.uuid: {}", t_uuid);
+        let t_doc = Embedding::from_uuid(t_uuid);
+        assert_eq!(t_doc.did, doc.did);
+        assert_eq!(t_doc.crc, doc.crc);
 
         let res = doc.fill(db, vec![]).await;
         assert!(res.is_err());
@@ -121,29 +184,38 @@ mod tests {
 
         doc.save(db).await.unwrap();
 
-        let mut doc2 = Embedding::new(did, "English".to_string(), vec!["abcdef".to_string()]);
+        let mut doc2 = Embedding::new(did, doc.crc);
         doc2.fill(db, vec![]).await.unwrap();
 
         assert_eq!(
             doc2.columns.get_as::<String>("user"),
             Ok("jarvis00000000000000".to_string())
         );
+        assert_eq!(doc2.columns.get_as::<String>("lang"), Ok(lang.to_string()));
         assert_eq!(
             doc2.columns.get_as::<BTreeMap<String, i32>>("tokens"),
             Ok(BTreeMap::from([("ada2".to_string(), 998i32)]))
+        );
+        assert_eq!(
+            doc2.columns.get_as::<String>("ids"),
+            Ok("abcdef".to_string())
         );
         let data = doc2.columns.get_as::<Vec<u8>>("content").unwrap();
         let content2: TEContentList = ciborium::from_reader(&data[..]).unwrap();
 
         assert_eq!(content2, content);
 
-        let mut doc3 = Embedding::new(did, "English".to_string(), vec!["abcdef".to_string()]);
-        doc3.fill(db, vec!["content", "ada2"]).await.unwrap();
+        let mut doc3 = Embedding::new(did, doc.crc);
+        doc3.fill(db, vec!["ids", "ada2"]).await.unwrap();
         assert!(!doc3.columns.has("user"));
         assert!(!doc3.columns.has("tokens"));
         assert!(!doc3.columns.has("gpt4"));
-        assert!(doc3.columns.has("content"));
-        assert_eq!(doc3.columns.get_as::<Vec<u8>>("content").unwrap(), data);
+        assert!(!doc3.columns.has("content"));
+        assert!(doc3.columns.has("ids"));
+        assert_eq!(
+            doc3.columns.get_as::<String>("ids"),
+            Ok("abcdef".to_string())
+        );
         assert_eq!(
             doc3.columns.get_as::<Vec<f32>>("ada2").unwrap(),
             vec![1.01f32, 1.02f32]

@@ -22,6 +22,13 @@ pub struct ScyllaDB {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct Qdrant {
+    pub url: String,
+    #[serde(default)]
+    pub api_key: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct AzureAI {
     pub resource_name: String,
     pub api_key: String,
@@ -36,6 +43,7 @@ pub struct Conf {
     pub log: Log,
     pub server: Server,
     pub scylla: ScyllaDB,
+    pub qdrant: Qdrant,
     pub azureai: AzureAI,
 }
 

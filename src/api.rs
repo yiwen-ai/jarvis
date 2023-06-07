@@ -1,10 +1,10 @@
 use axum::{extract::State, Extension, Json};
+use qdrant_client::qdrant::point_id::PointIdOptions;
 use std::{str::FromStr, sync::Arc};
 
 use crate::context::ReqContext;
-use crate::db;
+use crate::db::{self, qdrant};
 use crate::erring::{HTTPError, SuccessResponse};
-use crate::json_util::RawJSON;
 use crate::lang::{normalize_lang, Language, LanguageDetector};
 use crate::model::{self, TESegmenter, Validator};
 use crate::openai;
@@ -14,6 +14,7 @@ pub struct AppState {
     pub ld: LanguageDetector,
     pub ai: openai::OpenAI,
     pub scylla: db::scylladb::ScyllaDB,
+    pub qdrant: qdrant::Qdrant,
     pub translating: Arc<String>, // keep the number of concurrent translating tasks
     pub embedding: Arc<String>,   // keep the number of concurrent embedding tasks
 }
@@ -58,12 +59,7 @@ pub async fn get_translating(
         });
     }
 
-    let did = xid::Id::from_str(&input.did).map_err(|e| HTTPError {
-        code: 400,
-        message: format!("parse document id error: {}", e),
-        data: None,
-    })?;
-
+    let did = xid_from_str(&input.did)?;
     let lang = normalize_lang(&input.lang);
     if Language::from_str(&lang).is_err() {
         return Err(HTTPError {
@@ -73,7 +69,7 @@ pub async fn get_translating(
         });
     }
 
-    let mut doc = db::Translating::new(did, lang.clone(), input.version as i16);
+    let mut doc = db::Translating::new(did, input.version as i16, lang.clone());
     doc.fill(&app.scylla, vec![])
         .await
         .map_err(HTTPError::from)?;
@@ -86,8 +82,114 @@ pub async fn get_translating(
         did: did.to_string(),
         lang: lang.clone(),
         used_tokens: 0,
-        content: content,
+        content,
     };
+
+    Ok(Json(SuccessResponse { result: res }))
+}
+
+pub async fn search_content(
+    State(app): State<Arc<AppState>>,
+    Extension(ctx): Extension<Arc<ReqContext>>,
+    Json(input): Json<model::SearchInput>,
+) -> Result<Json<SuccessResponse<Vec<model::TEOutput>>>, HTTPError> {
+    if input.input.is_empty() {
+        return Err(HTTPError {
+            code: 400,
+            message: "input is empty".to_string(),
+            data: None,
+        });
+    }
+
+    let embedding_res = app
+        .ai
+        .embedding(&ctx.rid, &ctx.user, &input.input)
+        .await
+        .map_err(HTTPError::from)?;
+
+    let mut f = qdrant::Filter {
+        should: Vec::new(),
+        must: Vec::new(),
+        must_not: Vec::new(),
+    };
+    if !input.did.is_empty() {
+        let mut fc = qdrant::FieldCondition::default();
+        fc.key = "did".to_string();
+        fc.r#match = Some(qdrant::Match {
+            match_value: Some(qdrant::MatchValue::Text(input.did)),
+        });
+        f.must.push(qdrant::Condition::from(fc))
+    }
+    if !input.lang.is_empty() {
+        let mut fc = qdrant::FieldCondition::default();
+        fc.key = "lang".to_string();
+        fc.r#match = Some(qdrant::Match {
+            match_value: Some(qdrant::MatchValue::Text(input.lang)),
+        });
+        f.must.push(qdrant::Condition::from(fc))
+    }
+    if !input.user.is_empty() {
+        let mut fc = qdrant::FieldCondition::default();
+        fc.key = "user".to_string();
+        fc.r#match = Some(qdrant::Match {
+            match_value: Some(qdrant::MatchValue::Text(input.user)),
+        });
+        f.must.push(qdrant::Condition::from(fc))
+    }
+
+    let f = if !f.must.is_empty() { Some(f) } else { None };
+    let qd_res = app
+        .qdrant
+        .search_points(embedding_res.1, f)
+        .await
+        .map_err(HTTPError::from)?;
+
+    let mut res: Vec<model::TEOutput> = Vec::with_capacity(qd_res.result.len());
+    for q in qd_res.result {
+        let id = match q.id {
+            None => {
+                return Err(HTTPError {
+                    code: 500,
+                    message: "invalid ScoredPoint id from result".to_string(),
+                    data: Some(serde_json::Value::String(format!("{:?}", q.id))),
+                });
+            }
+            Some(id) => match id.point_id_options {
+                Some(PointIdOptions::Uuid(x)) => x,
+                _ => {
+                    return Err(HTTPError {
+                        code: 500,
+                        message: "invalid ScoredPoint id from result".to_string(),
+                        data: Some(serde_json::Value::String(format!("{:?}", id))),
+                    });
+                }
+            },
+        };
+
+        let id = uuid::Uuid::from_str(&id).map_err(|e| HTTPError {
+            code: 500,
+            message: format!("extract uuid error: {}", e),
+            data: None,
+        })?;
+
+        let mut doc = db::Embedding::from_uuid(id);
+        doc.fill(&app.scylla, vec![])
+            .await
+            .map_err(HTTPError::from)?;
+
+        res.push(model::TEOutput {
+            did: doc.did.to_string(),
+            lang: doc
+                .columns
+                .get_as::<String>("lang")
+                .unwrap_or("".to_string()),
+            used_tokens: 0,
+            content: doc
+                .columns
+                .get_from_cbor("content")
+                .map_err(HTTPError::from)?,
+        });
+    }
 
     Ok(Json(SuccessResponse { result: res }))
 }
@@ -105,12 +207,12 @@ pub async fn translate_and_embedding(
         });
     }
 
-    let did = xid::Id::from_str(&input.did).map_err(|e| HTTPError {
-        code: 400,
-        message: format!("parse document id error: {}", e),
-        data: None,
-    })?;
-    let uid = xid::Id::from_str(&ctx.user).unwrap_or(xid::Id::from_str(JARVIS).unwrap());
+    let did = xid_from_str(&input.did)?;
+    let uid = if ctx.user.is_empty() {
+        xid_from_str(JARVIS)?
+    } else {
+        xid_from_str(&ctx.user)?
+    };
 
     let target_lang = normalize_lang(&input.lang);
     if Language::from_str(&target_lang).is_err() {
@@ -161,7 +263,7 @@ pub async fn translate_and_embedding(
         .await;
 
     // save origin lang doc to db
-    let mut origin_doc = db::Translating::new(did, origin_lang.clone(), input.version as i16);
+    let mut origin_doc = db::Translating::new(did, input.version as i16, origin_lang.clone());
     origin_doc.columns.set_ascii("user", &uid.to_string());
     origin_doc
         .columns
@@ -174,7 +276,7 @@ pub async fn translate_and_embedding(
         .map_err(HTTPError::from)?;
 
     // save target lang doc to db
-    let mut target_doc = db::Translating::new(did, target_lang.clone(), input.version as i16);
+    let mut target_doc = db::Translating::new(did, input.version as i16, target_lang.clone());
     target_doc.columns.set_ascii("user", &uid.to_string());
     target_doc
         .columns
@@ -238,55 +340,17 @@ async fn translate(
                 user,
                 origin_lang,
                 target_lang,
-                &unit.content_to_json_string(),
+                &unit.to_translating_list(),
             )
             .await;
         if res.is_err() {
+            // here we can retry for 5xx error
             return Err(HTTPError::from(res.err().unwrap()));
         }
 
         let (total_tokens, content) = res.unwrap();
         rt.used_tokens += total_tokens as usize;
-
-        let mut list = serde_json::from_str::<Vec<model::TEContent>>(&content);
-        if list.is_err() {
-            match RawJSON::new(&content).fix_me() {
-                Ok(fixed) => {
-                    list = serde_json::from_str::<Vec<model::TEContent>>(&fixed);
-                    log::info!(target: "translating",
-                        action = "fix_json",
-                        rid = rid,
-                        user = user,
-                        did = did,
-                        origin_lang = origin_lang,
-                        target_lang = target_lang;
-                        "",
-                    );
-                }
-                Err(er) => {
-                    log::error!(target: "translating",
-                        action = "parse_error",
-                        rid = rid,
-                        user = user,
-                        did = did,
-                        origin_lang = origin_lang,
-                        target_lang = target_lang,
-                        content = &content;
-                        "{}", &er,
-                    );
-                }
-            }
-        }
-
-        if list.is_err() {
-            return Err(HTTPError {
-                code: 422,
-                message: list.err().unwrap().to_string(),
-                data: None,
-            });
-        };
-
-        rt.content.extend(list.unwrap());
+        rt.content.extend(unit.replace_texts(&content));
     }
 
     Ok(rt)
@@ -300,12 +364,13 @@ async fn embedding(
     lang: String,
     input: Vec<model::TEUnit>,
 ) {
+    let _ = app.embedding.clone();
     let mut total_tokens: i64 = 0;
-    let tokio_embedding = app.embedding.clone();
+    let mut points: Vec<qdrant::PointStruct> = Vec::with_capacity(input.len());
     for unit in input {
         let res = app
             .ai
-            .embedding(&rid, &user, &unit.content_to_embedding_string())
+            .embedding(&rid, &user, &unit.to_embedding_string())
             .await;
         if res.is_err() {
             log::warn!(target: "embedding",
@@ -322,9 +387,8 @@ async fn embedding(
         let (used_tokens, embeddings) = res.unwrap();
         total_tokens += used_tokens as i64;
         // save target lang content embedding to db
-        let mut content_embedding = db::Embedding::new(did, lang.clone(), unit.ids());
+        let mut content_embedding = db::Embedding::from(did, &lang, &unit.ids().join(","));
         content_embedding.columns.set_ascii("user", &user);
-        content_embedding.columns.set_ascii("lang", &lang);
         content_embedding
             .columns
             .append_map_i32("tokens", "ada2", used_tokens as i32);
@@ -357,6 +421,7 @@ async fn embedding(
             return;
         }
 
+        points.push(content_embedding.qdrant_point());
         log::info!(target: "embedding",
             action = "finish_embedding",
             rid = &rid,
@@ -373,5 +438,44 @@ async fn embedding(
     let mut user_counter = db::Counter::new(uid);
     let _ = user_counter.incr_embedding(&app.scylla, total_tokens).await;
 
-    let _ = tokio_embedding.as_str(); // avoid unused warning
+    let points_len = points.len();
+    if let Err(err) = app.qdrant.add_points(points).await {
+        log::warn!(target: "qdrant",
+            action = "add_points",
+            rid = &rid,
+            user = &user,
+            did = did.to_string(),
+            lang = &lang,
+            points = points_len;
+            "{}", err,
+        );
+    } else {
+        log::info!(target: "qdrant",
+            action = "add_points",
+            rid = &rid,
+            user = &user,
+            did = did.to_string(),
+            lang = &lang,
+            points = points_len;
+            "",
+        );
+    }
+
+    // let _ = tokio_embedding.as_str(); // avoid unused warning
+}
+
+fn xid_from_str(s: &str) -> Result<xid::Id, HTTPError> {
+    let id = xid::Id::from_str(s).map_err(|e| HTTPError {
+        code: 400,
+        message: format!("parse document id error: {}", e),
+        data: None,
+    })?;
+    if id.to_string().as_str() != s {
+        return Err(HTTPError {
+            code: 400,
+            message: format!("xid({}) check failed", s),
+            data: None,
+        });
+    }
+    Ok(id)
 }

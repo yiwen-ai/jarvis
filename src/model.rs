@@ -7,8 +7,8 @@ static TRANSLATE_SECTION_TOKENS: usize = 1800;
 static TRANSLATE_HIGH_TOKENS: usize = 2000;
 
 // https://community.openai.com/t/embedding-text-length-vs-accuracy/96564
-static EMBEDDING_SECTION_TOKENS: usize = 400;
-static EMBEDDING_HIGH_TOKENS: usize = 600;
+static EMBEDDING_SECTION_TOKENS: usize = 200;
+static EMBEDDING_HIGH_TOKENS: usize = 300;
 
 pub trait Validator {
     fn validate(&self) -> Option<String>;
@@ -34,6 +34,17 @@ pub struct AppInfo {
     pub scylla_errors_iter_num: u64,
     pub scylla_queries_iter_num: u64,
     pub scylla_retries_num: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SearchInput {
+    pub input: String, // the input text
+    #[serde(default)]
+    pub did: String, // document id
+    #[serde(default)]
+    pub lang: String, // the target language translate to
+    #[serde(default)]
+    pub user: String, // the target language translate to
 }
 
 #[derive(Serialize, Deserialize)]
@@ -83,8 +94,8 @@ pub struct TEContent {
 pub type TEContentList = Vec<TEContent>;
 
 impl TEContent {
-    pub fn to_json_string(&self) -> String {
-        serde_json::to_string(self).expect("TEContent::to_json_string error")
+    pub fn to_translating_string(&self) -> String {
+        serde_json::to_string(&self.texts).expect("TEContent::to_translating_string error")
     }
 
     pub fn to_embedding_string(&self) -> String {
@@ -119,16 +130,35 @@ impl TEUnit {
         ids
     }
 
-    pub fn content_to_json_string(&self) -> String {
-        serde_json::to_string(&self.content).expect("TEUnit::content_to_json_string error")
+    pub fn to_translating_list(&self) -> Vec<&Vec<String>> {
+        let mut res: Vec<&Vec<String>> = Vec::with_capacity(self.content.len());
+        for c in &self.content {
+            res.push(&c.texts);
+        }
+        res
     }
 
-    pub fn content_to_embedding_string(&self) -> String {
+    pub fn to_embedding_string(&self) -> String {
         let mut tes: Vec<String> = Vec::new();
         for c in &self.content {
             tes.push(c.to_embedding_string());
         }
         tes.join("; ")
+    }
+
+    pub fn replace_texts(&self, input: &Vec<Vec<String>>) -> TEContentList {
+        let mut res: TEContentList = Vec::with_capacity(input.len());
+        if input.len() != self.content.len() {
+            return res;
+        }
+
+        for (i, v) in input.iter().enumerate() {
+            res.push(TEContent {
+                id: self.content[i].id.clone(),
+                texts: v.to_owned(),
+            });
+        }
+        res
     }
 }
 
@@ -190,7 +220,7 @@ impl TESegmenter for TEContentList {
             let ctl = if for_embedding {
                 tokens_len(&c.to_embedding_string())
             } else {
-                tokens_len(&c.to_json_string())
+                tokens_len(&c.to_translating_string())
             };
 
             if unit.tokens + ctl > high_tokens {

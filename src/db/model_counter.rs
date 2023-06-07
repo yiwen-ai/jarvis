@@ -2,11 +2,7 @@ use std::collections::BTreeMap;
 
 use super::{scylladb, ToAnyhowError};
 
-// uid                BLOB,    # user id, 12 bytes, https://docs.rs/xid/latest/xid/
-// embedding          COUNTER,
-// embedding_tokens   COUNTER,
-// translating        COUNTER,
-// translating_tokens COUNTER,
+// TABLE: jarvis.counter
 pub struct Counter {
     pub uid: xid::Id,
 
@@ -44,7 +40,7 @@ impl Counter {
             "SELECT {} FROM counter WHERE uid=? LIMIT 1",
             fields.join(",")
         );
-        let params = (self.uid.as_bytes().to_vec(),);
+        let params = (self.uid.as_bytes(),);
         let res = db.execute(query, params).await?.single_row();
 
         if let Err(err) = res {
@@ -61,7 +57,7 @@ impl Counter {
         tokens: i64,
     ) -> anyhow::Result<()> {
         let query = "UPDATE counter SET embedding=embedding+1, embedding_tokens=embedding_tokens+?  WHERE uid=?";
-        let params = (tokens, self.uid.as_bytes().to_vec());
+        let params = (tokens, self.uid.as_bytes());
         db.execute(query, params).await?;
         Ok(())
     }
@@ -72,7 +68,7 @@ impl Counter {
         tokens: i64,
     ) -> anyhow::Result<()> {
         let query = "UPDATE counter SET translating=translating+1, translating_tokens=translating_tokens+? WHERE uid=?";
-        let params = (tokens, self.uid.as_bytes().to_vec());
+        let params = (tokens, self.uid.as_bytes());
         db.execute(query, params).await?;
         Ok(())
     }

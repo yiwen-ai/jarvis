@@ -31,6 +31,22 @@ start Qdrant:
 docker run -d -p 6333:6333 -p 6334:6334 --name qdrant qdrant/qdrant:latest
 ```
 
+```bash
+curl -X PUT 'http://localhost:6333/collections/jarvis_test' \
+    -H 'Content-Type: application/json' \
+    --data-raw '{
+        "vectors": {
+            "size": 1536,
+            "distance": "Cosine",
+            "on_disk_payload": false
+        }
+    }'
+```
+
+```bash
+curl 'http://localhost:6333/collections/jarvis_test'
+```
+
 ### Create a config.toml file
 
 ```bash
