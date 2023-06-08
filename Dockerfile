@@ -8,7 +8,7 @@ COPY config ./config
 COPY Cargo.toml Cargo.lock ./
 RUN cargo build --release
 
-FROM --platform=$BUILDPLATFORM ubuntu:latest
+FROM --platform=$BUILDPLATFORM ubuntu:23.04
 RUN ln -snf /usr/share/zoneinfo/$CONTAINER_TIMEZONE /etc/localtime && echo $CONTAINER_TIMEZONE > /etc/timezone
 RUN apt-get update \
     && apt-get install -y bash curl ca-certificates tzdata locales \
