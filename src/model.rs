@@ -7,8 +7,8 @@ static TRANSLATE_SECTION_TOKENS: usize = 1800;
 static TRANSLATE_HIGH_TOKENS: usize = 2000;
 
 // https://community.openai.com/t/embedding-text-length-vs-accuracy/96564
-static EMBEDDING_SECTION_TOKENS: usize = 200;
-static EMBEDDING_HIGH_TOKENS: usize = 300;
+static EMBEDDING_SECTION_TOKENS: usize = 400;
+static EMBEDDING_HIGH_TOKENS: usize = 600;
 
 pub trait Validator {
     fn validate(&self) -> Option<String>;

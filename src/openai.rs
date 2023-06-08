@@ -4,7 +4,7 @@ use async_openai::types::{
     CreateChatCompletionResponse, CreateEmbeddingRequestArgs, CreateEmbeddingResponse, Role, Usage,
 };
 use axum::http::header::{HeaderName, HeaderValue};
-use reqwest::{header, Client};
+use reqwest::{header, Client, ClientBuilder};
 use std::time::Instant;
 use tokio::time::{sleep, Duration};
 
@@ -12,17 +12,42 @@ use crate::conf::AzureAI;
 use crate::erring::{headers_to_json, HTTPError};
 use crate::json_util::RawJSONArray;
 
+static APP_USER_AGENT: &str = concat!(
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36 ",
+    env!("CARGO_PKG_NAME"),
+    "/",
+    env!("CARGO_PKG_VERSION"),
+);
+
+static X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
+
 pub struct OpenAI {
     client: Client,
     azure_chat_url: reqwest::Url,
     azure_embedding_url: reqwest::Url,
-    api_headers: header::HeaderMap,
 }
 
 impl OpenAI {
     pub fn new(opts: AzureAI) -> Self {
+        let mut headers = header::HeaderMap::with_capacity(2);
+        headers.insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
+        headers.insert(
+            HeaderName::from_lowercase(b"api-key").unwrap(),
+            opts.api_key.parse().unwrap(),
+        );
+
+        let client = ClientBuilder::new()
+            .http2_keep_alive_interval(Some(Duration::from_secs(25)))
+            .http2_keep_alive_timeout(Duration::from_secs(5))
+            .http2_keep_alive_while_idle(true)
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(60))
+            .user_agent(APP_USER_AGENT)
+            .gzip(true)
+            .default_headers(headers);
+
         Self {
-            client: Client::new(),
+            client: client.build().unwrap(),
             azure_chat_url: reqwest::Url::parse(&format!(
                 "https://{}.openai.azure.com/openai/deployments/{}/chat/completions?api-version={}",
                 opts.resource_name, opts.chat_model, opts.api_version
@@ -33,15 +58,6 @@ impl OpenAI {
                 opts.resource_name, opts.embedding_model, opts.api_version
             ))
             .unwrap(),
-            api_headers: {
-                let mut headers = header::HeaderMap::with_capacity(3);
-                headers.insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
-                headers.insert(
-                    header::HeaderName::from_lowercase(b"api-key").unwrap(),
-                    opts.api_key.parse().unwrap(),
-                );
-                headers
-            },
         }
     }
 
@@ -276,16 +292,10 @@ impl OpenAI {
             req.user = Some(user.to_string())
         }
 
-        let mut headers = self.api_headers.clone();
-        headers.insert(
-            HeaderName::from_static("x-request-id"),
-            HeaderValue::from_str(rid)?,
-        );
-
         let mut res = self
             .client
             .post(self.azure_chat_url.clone())
-            .headers(headers)
+            .header(X_REQUEST_ID.clone(), HeaderValue::from_str(rid)?)
             .json(&req)
             .send()
             .await?;
@@ -294,16 +304,10 @@ impl OpenAI {
         if res.status() == 429 {
             sleep(Duration::from_secs(2)).await;
 
-            let mut headers = self.api_headers.clone();
-            headers.insert(
-                HeaderName::from_static("x-request-id"),
-                HeaderValue::from_str(rid)?,
-            );
-
             res = self
                 .client
                 .post(self.azure_chat_url.clone())
-                .headers(headers)
+                .header(X_REQUEST_ID.clone(), HeaderValue::from_str(rid)?)
                 .json(&req)
                 .send()
                 .await?;
@@ -361,16 +365,10 @@ impl OpenAI {
             req.user = Some(user.to_string())
         }
 
-        let mut headers = self.api_headers.clone();
-        headers.insert(
-            HeaderName::from_static("x-request-id"),
-            HeaderValue::from_str(rid)?,
-        );
-
         let mut res = self
             .client
             .post(self.azure_embedding_url.clone())
-            .headers(headers)
+            .header(X_REQUEST_ID.clone(), HeaderValue::from_str(rid)?)
             .json(&req)
             .send()
             .await?;
@@ -378,16 +376,10 @@ impl OpenAI {
         if res.status() == 429 {
             sleep(Duration::from_secs(1)).await;
 
-            let mut headers = self.api_headers.clone();
-            headers.insert(
-                HeaderName::from_static("x-request-id"),
-                HeaderValue::from_str(rid)?,
-            );
-
             res = self
                 .client
                 .post(self.azure_embedding_url.clone())
-                .headers(headers)
+                .header(X_REQUEST_ID.clone(), HeaderValue::from_str(rid)?)
                 .json(&req)
                 .send()
                 .await?;

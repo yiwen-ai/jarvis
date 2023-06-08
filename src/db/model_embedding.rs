@@ -134,13 +134,15 @@ impl Embedding {
     }
 }
 
+#[cfg(test)]
 mod tests {
 
     use std::{collections::BTreeMap, str::FromStr};
     use tokio::sync::OnceCell;
 
+    use crate::{conf, erring, model};
+
     use super::*;
-    use crate::{conf, erring::HTTPError, model::TEContentList};
 
     static DB: OnceCell<scylladb::ScyllaDB> = OnceCell::const_new();
 
@@ -167,9 +169,9 @@ mod tests {
 
         let res = doc.fill(db, vec![]).await;
         assert!(res.is_err());
-        assert_eq!(HTTPError::from(res.unwrap_err()).code, 404);
+        assert_eq!(erring::HTTPError::from(res.unwrap_err()).code, 404);
 
-        let content: TEContentList =
+        let content: model::TEContentList =
             serde_json::from_str(r#"[{"id":"abcdef","texts":["hello world","你好，世界"]}]"#)
                 .unwrap();
         assert_eq!(content[0].texts[1], "你好，世界");
@@ -178,7 +180,7 @@ mod tests {
         doc.columns.append_map_i32("tokens", "ada2", 998);
         doc.columns
             .set_in_cbor("content", &content)
-            .map_err(HTTPError::from)
+            .map_err(erring::HTTPError::from)
             .unwrap();
         doc.columns.set_list_f32("ada2", &vec![1.01f32, 1.02f32]);
 
@@ -201,7 +203,7 @@ mod tests {
             Ok("abcdef".to_string())
         );
         let data = doc2.columns.get_as::<Vec<u8>>("content").unwrap();
-        let content2: TEContentList = ciborium::from_reader(&data[..]).unwrap();
+        let content2: model::TEContentList = ciborium::from_reader(&data[..]).unwrap();
 
         assert_eq!(content2, content);
 

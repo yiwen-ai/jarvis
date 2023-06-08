@@ -83,12 +83,14 @@ impl Counter {
     }
 }
 
+#[cfg(test)]
 mod tests {
 
     use tokio::sync::OnceCell;
 
+    use crate::{conf, erring};
+
     use super::*;
-    use crate::{conf, erring::HTTPError};
 
     static DB: OnceCell<scylladb::ScyllaDB> = OnceCell::const_new();
 
@@ -106,7 +108,7 @@ mod tests {
 
         let res = doc.fill(db, vec![]).await;
         assert!(res.is_err());
-        assert_eq!(HTTPError::from(res.unwrap_err()).code, 404);
+        assert_eq!(erring::HTTPError::from(res.unwrap_err()).code, 404);
 
         doc.incr_embedding(db, 99).await.unwrap();
 

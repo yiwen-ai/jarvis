@@ -1,4 +1,4 @@
-use axum::{extract::State, Extension, Json};
+use axum::{extract::State, Extension};
 use qdrant_client::qdrant::point_id::PointIdOptions;
 use std::{str::FromStr, sync::Arc};
 
@@ -7,6 +7,7 @@ use crate::db::{self, qdrant};
 use crate::erring::{HTTPError, SuccessResponse};
 use crate::lang::{normalize_lang, Language, LanguageDetector};
 use crate::model::{self, TESegmenter, Validator};
+use crate::object::{Object, ObjectType};
 use crate::openai;
 use crate::tokenizer;
 
@@ -24,33 +25,39 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 static JARVIS: &str = "jarvis00000000000000";
 
-pub async fn version() -> Json<model::AppVersion> {
-    Json(model::AppVersion {
-        name: APP_NAME.to_string(),
-        version: APP_VERSION.to_string(),
-    })
+pub async fn version(ct: ObjectType) -> Object<model::AppVersion> {
+    Object(
+        ct.or_default(),
+        model::AppVersion {
+            name: APP_NAME.to_string(),
+            version: APP_VERSION.to_string(),
+        },
+    )
 }
 
-pub async fn healthz(State(app): State<Arc<AppState>>) -> Json<model::AppInfo> {
+pub async fn healthz(State(app): State<Arc<AppState>>, ct: ObjectType) -> Object<model::AppInfo> {
     let m = app.scylla.metrics();
-    Json(model::AppInfo {
-        tokio_translating_tasks: Arc::strong_count(&app.translating) as i64 - 1,
-        tokio_embedding_tasks: Arc::strong_count(&app.embedding) as i64 - 1,
-        scylla_latency_avg_ms: m.get_latency_avg_ms().unwrap_or(0),
-        scylla_latency_p99_ms: m.get_latency_percentile_ms(99.0f64).unwrap_or(0),
-        scylla_latency_p90_ms: m.get_latency_percentile_ms(90.0f64).unwrap_or(0),
-        scylla_errors_num: m.get_errors_num(),
-        scylla_queries_num: m.get_queries_num(),
-        scylla_errors_iter_num: m.get_errors_iter_num(),
-        scylla_queries_iter_num: m.get_queries_iter_num(),
-        scylla_retries_num: m.get_retries_num(),
-    })
+    Object(
+        ct.or_default(),
+        model::AppInfo {
+            tokio_translating_tasks: Arc::strong_count(&app.translating) as i64 - 1,
+            tokio_embedding_tasks: Arc::strong_count(&app.embedding) as i64 - 1,
+            scylla_latency_avg_ms: m.get_latency_avg_ms().unwrap_or(0),
+            scylla_latency_p99_ms: m.get_latency_percentile_ms(99.0f64).unwrap_or(0),
+            scylla_latency_p90_ms: m.get_latency_percentile_ms(90.0f64).unwrap_or(0),
+            scylla_errors_num: m.get_errors_num(),
+            scylla_queries_num: m.get_queries_num(),
+            scylla_errors_iter_num: m.get_errors_iter_num(),
+            scylla_queries_iter_num: m.get_queries_iter_num(),
+            scylla_retries_num: m.get_retries_num(),
+        },
+    )
 }
 
 pub async fn get_translating(
     State(app): State<Arc<AppState>>,
-    Json(input): Json<model::TEInput>,
-) -> Result<Json<SuccessResponse<model::TEOutput>>, HTTPError> {
+    Object(ct, input): Object<model::TEInput>,
+) -> Result<Object<SuccessResponse<model::TEOutput>>, HTTPError> {
     if let Some(err) = input.validate() {
         return Err(HTTPError {
             code: 400,
@@ -85,14 +92,14 @@ pub async fn get_translating(
         content,
     };
 
-    Ok(Json(SuccessResponse { result: res }))
+    Ok(Object(ct, SuccessResponse { result: res }))
 }
 
 pub async fn search_content(
     State(app): State<Arc<AppState>>,
     Extension(ctx): Extension<Arc<ReqContext>>,
-    Json(input): Json<model::SearchInput>,
-) -> Result<Json<SuccessResponse<Vec<model::TEOutput>>>, HTTPError> {
+    Object(ct, input): Object<model::SearchInput>,
+) -> Result<Object<SuccessResponse<Vec<model::TEOutput>>>, HTTPError> {
     if input.input.is_empty() {
         return Err(HTTPError {
             code: 400,
@@ -113,27 +120,33 @@ pub async fn search_content(
         must_not: Vec::new(),
     };
     if !input.did.is_empty() {
-        let mut fc = qdrant::FieldCondition::default();
-        fc.key = "did".to_string();
-        fc.r#match = Some(qdrant::Match {
-            match_value: Some(qdrant::MatchValue::Text(input.did)),
-        });
+        let fc = qdrant::FieldCondition {
+            key: "did".to_string(),
+            r#match: Some(qdrant::Match {
+                match_value: Some(qdrant::MatchValue::Text(input.did)),
+            }),
+            ..qdrant::FieldCondition::default()
+        };
         f.must.push(qdrant::Condition::from(fc))
     }
     if !input.lang.is_empty() {
-        let mut fc = qdrant::FieldCondition::default();
-        fc.key = "lang".to_string();
-        fc.r#match = Some(qdrant::Match {
-            match_value: Some(qdrant::MatchValue::Text(input.lang)),
-        });
+        let fc = qdrant::FieldCondition {
+            key: "lang".to_string(),
+            r#match: Some(qdrant::Match {
+                match_value: Some(qdrant::MatchValue::Text(input.lang)),
+            }),
+            ..qdrant::FieldCondition::default()
+        };
         f.must.push(qdrant::Condition::from(fc))
     }
     if !input.user.is_empty() {
-        let mut fc = qdrant::FieldCondition::default();
-        fc.key = "user".to_string();
-        fc.r#match = Some(qdrant::Match {
-            match_value: Some(qdrant::MatchValue::Text(input.user)),
-        });
+        let fc = qdrant::FieldCondition {
+            key: "user".to_string(),
+            r#match: Some(qdrant::Match {
+                match_value: Some(qdrant::MatchValue::Text(input.user)),
+            }),
+            ..qdrant::FieldCondition::default()
+        };
         f.must.push(qdrant::Condition::from(fc))
     }
 
@@ -191,14 +204,14 @@ pub async fn search_content(
         });
     }
 
-    Ok(Json(SuccessResponse { result: res }))
+    Ok(Object(ct, SuccessResponse { result: res }))
 }
 
 pub async fn translate_and_embedding(
     State(app): State<Arc<AppState>>,
     Extension(ctx): Extension<Arc<ReqContext>>,
-    Json(input): Json<model::TEInput>,
-) -> Result<Json<SuccessResponse<model::TEOutput>>, HTTPError> {
+    Object(ct, input): Object<model::TEInput>,
+) -> Result<Object<SuccessResponse<model::TEOutput>>, HTTPError> {
     if let Some(err) = input.validate() {
         return Err(HTTPError {
             code: 400,
@@ -313,7 +326,7 @@ pub async fn translate_and_embedding(
     ));
 
     let _ = tokio_translating.as_str(); // avoid unused warning
-    Ok(Json(SuccessResponse { result: res }))
+    Ok(Object(ct, SuccessResponse { result: res }))
 }
 
 async fn translate(

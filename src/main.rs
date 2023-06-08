@@ -20,6 +20,7 @@ mod erring;
 mod json_util;
 mod lang;
 mod model;
+mod object;
 mod openai;
 mod tokenizer;
 
@@ -28,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
     let cfg = conf::Conf::new().unwrap_or_else(|err| panic!("config error: {}", err));
 
     Builder::with_level(cfg.log.level.as_str())
-        .with_target_writer("api", new_writer(io::stdout()))
+        .with_target_writer("*", new_writer(io::stdout()))
         .init();
 
     log::debug!("{:?}", cfg);
