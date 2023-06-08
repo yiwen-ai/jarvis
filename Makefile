@@ -7,7 +7,7 @@ run-dev:
 	@CONFIG_FILE_PATH=./config.toml cargo run
 
 test:
-	@cargo test -- --nocapture
+	@cargo test -- --nocapture --include-ignored
 
 lint:
 	@cargo clippy --all-targets --all-features

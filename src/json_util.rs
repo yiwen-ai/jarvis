@@ -269,11 +269,11 @@ mod tests {
         for case in test_cases {
             match RawJSONArray::new(&case.input).fix_me() {
                 Ok(val) => {
-                    println!("FIX_OK: `{}` => `{}`, {}", case.input, val, val.len());
+                    // println!("FIX_OK: `{}` => `{}`, {}", case.input, val, val.len());
                     assert_eq!(val, case.output);
                 }
                 Err(err) => {
-                    println!("FIX_ERR:  `{}` => `{}`", case.input, err);
+                    // println!("FIX_ERR:  `{}` => `{}`", case.input, err);
                     assert!(case.err.is_some());
                     assert!(err.contains::<&str>(case.err.unwrap().as_ref()));
                 }
@@ -329,11 +329,11 @@ mod tests {
         for case in test_cases {
             match RawJSONArray::new(&case.input).fix_me() {
                 Ok(val) => {
-                    println!("FIX_OK: `{}` => `{}`, {}", case.input, val, val.len());
+                    // println!("FIX_OK: `{}` => `{}`, {}", case.input, val, val.len());
                     assert_eq!(val, case.output);
                 }
                 Err(err) => {
-                    println!("FIX_ERR:  `{}` => `{}`", case.input, err);
+                    // println!("FIX_ERR:  `{}` => `{}`", case.input, err);
                     assert!(case.err.is_some());
                     assert!(err.contains::<&str>(case.err.unwrap().as_ref()));
                 }

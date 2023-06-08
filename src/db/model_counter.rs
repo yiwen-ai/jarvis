@@ -101,6 +101,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    #[ignore]
     async fn counter_model_works() {
         let db = DB.get_or_init(get_db).await;
         let uid = xid::new();

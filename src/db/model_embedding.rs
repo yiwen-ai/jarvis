@@ -153,6 +153,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    #[ignore]
     async fn embedding_model_works() {
         let db = DB.get_or_init(get_db).await;
         let did = xid::new();
