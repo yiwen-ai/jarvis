@@ -4,13 +4,17 @@ use async_openai::types::{
     CreateChatCompletionResponse, CreateEmbeddingRequestArgs, CreateEmbeddingResponse, Role, Usage,
 };
 use axum::http::header::{HeaderName, HeaderValue};
-use reqwest::{header, Client, ClientBuilder};
-use std::time::Instant;
+
+use libflate::gzip::{Encoder};
+use reqwest::{header, Client, ClientBuilder, Identity, Response};
+use std::{path::Path, time::Instant};
 use tokio::time::{sleep, Duration};
 
 use crate::conf::AzureAI;
 use crate::erring::{headers_to_json, HTTPError};
 use crate::json_util::RawJSONArray;
+
+const COMPRESS_MIN_LENGTH: usize = 512;
 
 static APP_USER_AGENT: &str = concat!(
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36 ",
@@ -25,6 +29,7 @@ pub struct OpenAI {
     client: Client,
     azure_chat_url: reqwest::Url,
     azure_embedding_url: reqwest::Url,
+    use_agent: bool,
 }
 
 impl OpenAI {
@@ -36,28 +41,51 @@ impl OpenAI {
             opts.api_key.parse().unwrap(),
         );
 
-        let client = ClientBuilder::new()
+        let mut client = ClientBuilder::new()
+            .use_rustls_tls()
+            .https_only(true)
             .http2_keep_alive_interval(Some(Duration::from_secs(25)))
             .http2_keep_alive_timeout(Duration::from_secs(5))
             .http2_keep_alive_while_idle(true)
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(60))
             .user_agent(APP_USER_AGENT)
-            .gzip(true)
-            .default_headers(headers);
+            .gzip(true);
+
+        let mut request_host = format!("{}.openai.azure.com", opts.resource_name);
+
+        let use_agent = !opts.agent.agent_host.is_empty();
+        if use_agent {
+            let root_cert: Vec<u8> =
+                std::fs::read(Path::new(&opts.agent.client_root_cert_file)).unwrap();
+            let root_cert = reqwest::Certificate::from_pem(&root_cert).unwrap();
+
+            let client_pem: Vec<u8> =
+                std::fs::read(Path::new(&opts.agent.client_pem_file)).unwrap();
+            let identity = Identity::from_pem(&client_pem).unwrap();
+
+            client = client.add_root_certificate(root_cert).identity(identity);
+
+            headers.insert(
+                HeaderName::from_lowercase(b"x-forwarded-host").unwrap(),
+                request_host.parse().unwrap(),
+            );
+            request_host = opts.agent.agent_host;
+        }
 
         Self {
-            client: client.build().unwrap(),
+            client: client.default_headers(headers).build().unwrap(),
             azure_chat_url: reqwest::Url::parse(&format!(
-                "https://{}.openai.azure.com/openai/deployments/{}/chat/completions?api-version={}",
-                opts.resource_name, opts.chat_model, opts.api_version
+                "https://{}/openai/deployments/{}/chat/completions?api-version={}",
+                request_host, opts.chat_model, opts.api_version
             ))
             .unwrap(),
             azure_embedding_url: reqwest::Url::parse(&format!(
-                "https://{}.openai.azure.com/openai/deployments/{}/embeddings?api-version={}",
-                opts.resource_name, opts.embedding_model, opts.api_version
+                "https://{}/openai/deployments/{}/embeddings?api-version={}",
+                request_host, opts.embedding_model, opts.api_version
             ))
             .unwrap(),
+            use_agent,
         }
     }
 
@@ -274,7 +302,7 @@ impl OpenAI {
             format!("{} and {} languages", origin_lang, target_lang)
         };
 
-        let mut req = CreateChatCompletionRequestArgs::default()
+        let mut req_body = CreateChatCompletionRequestArgs::default()
         .max_tokens(4096u16)
         .temperature(0f32)
         .messages([
@@ -289,15 +317,11 @@ impl OpenAI {
         ])
         .build()?;
         if !user.is_empty() {
-            req.user = Some(user.to_string())
+            req_body.user = Some(user.to_string())
         }
 
         let mut res = self
-            .client
-            .post(self.azure_chat_url.clone())
-            .header(X_REQUEST_ID.clone(), HeaderValue::from_str(rid)?)
-            .json(&req)
-            .send()
+            .request(self.azure_chat_url.clone(), rid, &req_body)
             .await?;
 
         // retry
@@ -305,11 +329,7 @@ impl OpenAI {
             sleep(Duration::from_secs(2)).await;
 
             res = self
-                .client
-                .post(self.azure_chat_url.clone())
-                .header(X_REQUEST_ID.clone(), HeaderValue::from_str(rid)?)
-                .json(&req)
-                .send()
+                .request(self.azure_chat_url.clone(), rid, &req_body)
                 .await?;
         }
 
@@ -360,28 +380,20 @@ impl OpenAI {
         user: &str,
         input: &str,
     ) -> Result<CreateEmbeddingResponse> {
-        let mut req = CreateEmbeddingRequestArgs::default().input(input).build()?;
+        let mut req_body = CreateEmbeddingRequestArgs::default().input(input).build()?;
         if !user.is_empty() {
-            req.user = Some(user.to_string())
+            req_body.user = Some(user.to_string())
         }
 
         let mut res = self
-            .client
-            .post(self.azure_embedding_url.clone())
-            .header(X_REQUEST_ID.clone(), HeaderValue::from_str(rid)?)
-            .json(&req)
-            .send()
+            .request(self.azure_embedding_url.clone(), rid, &req_body)
             .await?;
 
         if res.status() == 429 {
             sleep(Duration::from_secs(1)).await;
 
             res = self
-                .client
-                .post(self.azure_embedding_url.clone())
-                .header(X_REQUEST_ID.clone(), HeaderValue::from_str(rid)?)
-                .json(&req)
-                .send()
+                .request(self.azure_embedding_url.clone(), rid, &req_body)
                 .await?;
         }
 
@@ -407,5 +419,36 @@ impl OpenAI {
                 data: Some(headers_to_json(&headers)),
             }))
         }
+    }
+
+    async fn request<T: serde::Serialize + ?Sized>(
+        &self,
+        url: reqwest::Url,
+        rid: &str,
+        body: &T,
+    ) -> Result<Response> {
+        let data = serde_json::to_vec(body)?;
+        let req = self
+            .client
+            .post(url)
+            .header(header::ACCEPT_ENCODING, "gzip")
+            .header(X_REQUEST_ID.clone(), HeaderValue::from_str(rid)?);
+
+        let res = if self.use_agent && data.len() >= COMPRESS_MIN_LENGTH {
+            use std::io::Write;
+            let mut encoder = Encoder::new(Vec::new())?;
+            encoder.write_all(&data)?;
+            let data = encoder.finish().into_result()?;
+
+            // let data = zstd::stream::encode_all(data.reader(), 9)? // reqwest not support zstd;
+            req.header("content-encoding", "gzip")
+                .body(data)
+                .send()
+                .await?
+        } else {
+            req.body(data).send().await?
+        };
+
+        Ok(res)
     }
 }

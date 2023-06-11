@@ -7,9 +7,6 @@ use uuid::Uuid;
 
 pub use structured_logger::unix_ms;
 
-#[derive(Clone)]
-pub struct ContextLayer;
-
 pub struct ReqContext {
     pub rid: String,  // from x-request-id header
     pub user: String, // from x-user-id header
@@ -27,6 +24,11 @@ impl ReqContext {
             start: Instant::now(),
             kv: RwLock::new(BTreeMap::new()),
         }
+    }
+
+    pub async fn set(&self, key: &str, value: Value) {
+        let mut kv = self.kv.write().await;
+        kv.insert(key.to_string(), value);
     }
 }
 

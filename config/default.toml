@@ -32,3 +32,8 @@ api_key = ""
 api_version = "2023-05-15"
 chat_model = "gpt-35-turbo"
 embedding_model = "embedding-ada-002"
+
+[azureai.agent]
+agent_host = ""
+client_pem_file = ""
+client_root_cert_file = ""

@@ -35,6 +35,14 @@ pub struct AzureAI {
     pub api_version: String,
     pub chat_model: String,
     pub embedding_model: String,
+    pub agent: Agent,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Agent {
+    pub agent_host: String,
+    pub client_pem_file: String,
+    pub client_root_cert_file: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]

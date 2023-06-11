@@ -15,9 +15,5 @@ lint:
 fix:
 	@cargo clippy --fix --bin "jarvis" --tests
 
-build:
-	@cargo build --target x86_64-unknown-linux-gnu --release
-	@cargo build --target aarch64-unknown-linux-gnu --release
-
 docker:
 	@docker build -t yiwen-ai/jarvis:latest .
