@@ -1,4 +1,20 @@
+use axum::extract::State;
+use isolang::Language;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+
+use axum_web::object::PackObject;
+
+use crate::db::{self, qdrant};
+use crate::lang::LanguageDetector;
+use crate::openai;
+
+pub mod embedding;
+pub mod translating;
+
+pub const APP_NAME: &str = env!("CARGO_PKG_NAME");
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // dashes (------) is a horizontal rule, work as a top section separator
 static SECTION_SEPARATOR: &str = "------";
@@ -10,8 +26,14 @@ static TRANSLATE_HIGH_TOKENS: usize = 2000;
 static EMBEDDING_SECTION_TOKENS: usize = 400;
 static EMBEDDING_HIGH_TOKENS: usize = 600;
 
-pub trait Validator {
-    fn validate(&self) -> Option<String>;
+#[derive(Clone)]
+pub struct AppState {
+    pub ld: Arc<LanguageDetector>,
+    pub ai: Arc<openai::OpenAI>,
+    pub scylla: Arc<db::scylladb::ScyllaDB>,
+    pub qdrant: Arc<qdrant::Qdrant>,
+    pub translating: Arc<String>, // keep the number of concurrent translating tasks
+    pub embedding: Arc<String>,   // keep the number of concurrent embedding tasks
 }
 
 #[derive(Serialize, Deserialize)]
@@ -36,53 +58,33 @@ pub struct AppInfo {
     pub scylla_retries_num: u64,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct SearchInput {
-    pub input: String, // the input text
-    #[serde(default)]
-    pub did: String, // document id
-    #[serde(default)]
-    pub lang: String, // the target language translate to
-    #[serde(default)]
-    pub user: String, // the target language translate to
+pub async fn version(to: PackObject<()>, State(_): State<Arc<AppState>>) -> PackObject<AppVersion> {
+    to.with(AppVersion {
+        name: APP_NAME.to_string(),
+        version: APP_VERSION.to_string(),
+    })
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct TEInput {
-    pub did: String,  // document id
-    pub lang: String, // the target language translate to
-    pub version: u16, // should <= i16::MAX
-
-    #[serde(default)]
-    pub model: String,
-    #[serde(default)]
-    pub content: TEContentList,
+pub async fn healthz(to: PackObject<()>, State(app): State<Arc<AppState>>) -> PackObject<AppInfo> {
+    let m = app.scylla.metrics();
+    to.with(AppInfo {
+        tokio_translating_tasks: Arc::strong_count(&app.translating) as i64 - 1,
+        tokio_embedding_tasks: Arc::strong_count(&app.embedding) as i64 - 1,
+        scylla_latency_avg_ms: m.get_latency_avg_ms().unwrap_or(0),
+        scylla_latency_p99_ms: m.get_latency_percentile_ms(99.0f64).unwrap_or(0),
+        scylla_latency_p90_ms: m.get_latency_percentile_ms(90.0f64).unwrap_or(0),
+        scylla_errors_num: m.get_errors_num(),
+        scylla_queries_num: m.get_queries_num(),
+        scylla_errors_iter_num: m.get_errors_iter_num(),
+        scylla_queries_iter_num: m.get_queries_iter_num(),
+        scylla_retries_num: m.get_retries_num(),
+    })
 }
 
-impl Validator for TEInput {
-    fn validate(&self) -> Option<String> {
-        if self.did.is_empty() {
-            return Some("invalid document id".to_string());
-        }
-
-        if self.lang.is_empty() {
-            return Some("invalid target language".to_string());
-        }
-
-        if self.version == 0 || self.version > i16::MAX as u16 {
-            return Some(format!("invalid version {}", self.version));
-        }
-
-        None
-    }
-}
-
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TEOutput {
-    pub did: String,  // document id
-    pub lang: String, // the origin language detected.
-    pub used_tokens: usize,
-    pub content: TEContentList,
+    pub cid: PackObject<xid::Id>,                // document id
+    pub detected_language: PackObject<Language>, // the origin language detected.
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

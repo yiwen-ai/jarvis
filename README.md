@@ -6,7 +6,7 @@
 
 start Scylla:
 ```bash
-docker run -d -p 9042:9042 --name scylla scylladb/scylla:5.2.1 --smp 2
+docker run -d -p 9042:9042 --name scylla scylladb/scylla:5.2 --smp 2
 ```
 
 check Scylla status:

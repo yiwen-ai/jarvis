@@ -1,27 +1,21 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use axum::{http::header::HeaderName, middleware, routing::get, routing::post, Router};
+
 use structured_logger::{async_json::new_writer, Builder};
 use tokio::{
     io, signal,
     time::{sleep, Duration},
 };
-use tower::ServiceBuilder;
-use tower_http::{
-    catch_panic::CatchPanicLayer, compression::CompressionLayer,
-    propagate_header::PropagateHeaderLayer,
-};
+
+
 
 mod api;
 mod conf;
-mod context;
 mod db;
-mod erring;
 mod json_util;
 mod lang;
-mod model;
-mod object;
 mod openai;
+mod router;
 mod tokenizer;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
@@ -34,57 +28,21 @@ async fn main() -> anyhow::Result<()> {
 
     log::debug!("{:?}", cfg);
 
-    let ld = if cfg.env == "prod" {
-        lang::LanguageDetector::new()
-    } else {
-        lang::LanguageDetector::new_dev()
-    };
+    let server_cfg = cfg.server.clone();
+    let server_env = cfg.env.clone();
+    let (app_state, app) = router::new(cfg).await?;
 
-    let ai = openai::OpenAI::new(cfg.azureai);
-
-    let keyspace = if cfg.env == "test" {
-        "jarvis_test"
-    } else {
-        "jarvis"
-    };
-    let scylla = db::scylladb::ScyllaDB::new(cfg.scylla, keyspace).await?;
-
-    let qdrant = db::qdrant::Qdrant::new(cfg.qdrant, keyspace).await?;
-
-    let app_state = Arc::new(api::AppState {
-        ld,
-        ai,
-        scylla,
-        qdrant,
-        translating: Arc::new("translating".to_string()),
-        embedding: Arc::new("embedding".to_string()),
-    });
-
-    let mds = ServiceBuilder::new()
-        .layer(middleware::from_fn(context::middleware))
-        .layer(CatchPanicLayer::new())
-        .layer(CompressionLayer::new())
-        .layer(PropagateHeaderLayer::new(HeaderName::from_static(
-            "x-request-id",
-        )));
-
-    let app = Router::new()
-        .route("/", get(api::version))
-        .route("/healthz", get(api::healthz))
-        .route("/te", post(api::translate_and_embedding))
-        .route("/translating:get", post(api::get_translating))
-        .route("/search", post(api::search_content))
-        .route_layer(mds)
-        .with_state(app_state.clone());
-
-    let addr = SocketAddr::from(([0, 0, 0, 0], cfg.server.port));
-    log::info!("Javis start {} at {}", cfg.env, &addr);
+    let addr = SocketAddr::from(([0, 0, 0, 0], server_cfg.port));
+    log::info!(
+        "{}@{} start {} at {}",
+        api::APP_NAME,
+        api::APP_VERSION,
+        server_env,
+        &addr
+    );
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
-        .with_graceful_shutdown(shutdown_signal(
-            app_state.clone(),
-            cfg.server.graceful_shutdown,
-        ))
+        .with_graceful_shutdown(shutdown_signal(app_state, server_cfg.graceful_shutdown))
         .await?;
 
     Ok(())

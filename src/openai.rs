@@ -3,16 +3,16 @@ use async_openai::types::{
     ChatCompletionRequestMessageArgs, CreateChatCompletionRequestArgs,
     CreateChatCompletionResponse, CreateEmbeddingRequestArgs, CreateEmbeddingResponse, Role, Usage,
 };
-use axum::http::header::{HeaderName, HeaderValue};
+use axum::http::header::{HeaderMap, HeaderName, HeaderValue};
 
-use libflate::gzip::{Encoder};
+use libflate::gzip::Encoder;
 use reqwest::{header, Client, ClientBuilder, Identity, Response};
 use std::{path::Path, time::Instant};
 use tokio::time::{sleep, Duration};
 
 use crate::conf::AzureAI;
-use crate::erring::{headers_to_json, HTTPError};
 use crate::json_util::RawJSONArray;
+use axum_web::erring::HTTPError;
 
 const COMPRESS_MIN_LENGTH: usize = 512;
 
@@ -134,9 +134,10 @@ impl OpenAI {
 
         let res = res.unwrap();
         let choice = &res.choices[0];
-        let mut content = serde_json::from_str::<Vec<Vec<String>>>(&choice.message.content);
+        let oc = choice.message.content.clone().unwrap_or_default();
+        let mut content = serde_json::from_str::<Vec<Vec<String>>>(&oc);
         if content.is_err() {
-            match RawJSONArray::new(&choice.message.content).fix_me() {
+            match RawJSONArray::new(&oc).fix_me() {
                 Ok(fixed) => {
                     content = serde_json::from_str::<Vec<Vec<String>>>(&fixed);
                     let mut need_record = false;
@@ -154,11 +155,7 @@ impl OpenAI {
                         }
                     }
 
-                    let output = if need_record {
-                        choice.message.content.as_str()
-                    } else {
-                        ""
-                    };
+                    let output = if need_record { &oc } else { "" };
                     log::info!(target: "translating",
                         action = "fix_output",
                         rid = rid,
@@ -451,4 +448,15 @@ impl OpenAI {
 
         Ok(res)
     }
+}
+
+fn headers_to_json(headers: &HeaderMap) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for (key, value) in headers {
+        map.insert(
+            key.as_str().to_string(),
+            serde_json::Value::String(value.to_str().unwrap_or("").to_string()),
+        );
+    }
+    serde_json::Value::Object(map)
 }

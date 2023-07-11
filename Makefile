@@ -7,13 +7,13 @@ run-dev:
 	@CONFIG_FILE_PATH=./config.toml cargo run
 
 test:
-	@cargo test -- --nocapture --include-ignored
+	@cargo test --workspace -- --nocapture
+
+test-all:
+	@cargo test --workspace -- --nocapture --include-ignored
 
 lint:
-	@cargo clippy --all-targets --all-features
+	@cargo clippy --all-targets --all-features --workspace --tests
 
 fix:
-	@cargo clippy --fix --bin "jarvis" --tests
-
-docker:
-	@docker build -t yiwen-ai/jarvis:latest .
+	@cargo clippy --fix --workspace --tests
