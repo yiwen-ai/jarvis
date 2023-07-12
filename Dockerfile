@@ -3,8 +3,9 @@
 FROM --platform=$BUILDPLATFORM rust:latest AS builder
 
 WORKDIR /src
-COPY src ./src
 COPY config ./config
+COPY crates ./crates
+COPY src ./src
 COPY Cargo.toml Cargo.lock ./
 RUN cargo build --release
 

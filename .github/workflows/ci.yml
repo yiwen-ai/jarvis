@@ -7,6 +7,14 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      scylladb1:
+        image: scylladb/scylla:5.2
+        ports:
+          - 9042:9042
+        options: --health-cmd "cqlsh --debug" --health-interval 5s --health-retries 10
+        volumes:
+          - ${{ github.workspace }}:/workspace
     steps:
     - uses: actions/checkout@v3
     - name: Run clippy
