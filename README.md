@@ -32,19 +32,37 @@ docker run -d -p 6333:6333 -p 6334:6334 --name qdrant qdrant/qdrant:latest
 ```
 
 ```bash
-curl -X PUT 'http://localhost:6333/collections/jarvis_test' \
+curl -X PUT 'http://localhost:6333/collections/jarvis' \
     -H 'Content-Type: application/json' \
     --data-raw '{
         "vectors": {
             "size": 1536,
             "distance": "Cosine",
-            "on_disk_payload": false
+            "on_disk_payload": true,
+            "on_disk": true
         }
+    }'
+curl -X PUT 'http://localhost:6333/collections/jarvis_pub' \
+    -H 'Content-Type: application/json' \
+    --data-raw '{
+        "vectors": {
+            "size": 1536,
+            "distance": "Cosine",
+            "on_disk_payload": true,
+            "on_disk": true
+        }
+    }'
+curl -X PUT 'http://localhost:6333/collections/jarvis/index' \
+    -H 'Content-Type: application/json' \
+    --data-raw '{
+        "field_name": "gid",
+        "field_schema": "keyword"
     }'
 ```
 
+
 ```bash
-curl 'http://localhost:6333/collections/jarvis_test'
+curl 'http://localhost:6333/collections/jarvis'
 ```
 
 ### Create a config.toml file
