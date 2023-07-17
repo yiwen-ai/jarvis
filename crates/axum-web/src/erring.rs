@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::{convert::From, error::Error, fmt, fmt::Debug};
 use validator::{ValidationError, ValidationErrors};
 
+use crate::object::PackObject;
+
 /// ErrorResponse is the response body for error.
 #[derive(Deserialize, Serialize)]
 pub struct ErrorResponse {
@@ -20,7 +22,7 @@ pub struct SuccessResponse<T> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_size: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_page_token: Option<String>,
+    pub next_page_token: Option<PackObject<Vec<u8>>>,
     pub result: T,
 }
 
@@ -99,4 +101,11 @@ impl From<ValidationErrors> for HTTPError {
     fn from(err: ValidationErrors) -> Self {
         HTTPError::new(400, format!("{:?}", err))
     }
+}
+
+pub fn valid_user(uid: xid::Id) -> Result<(), HTTPError> {
+    if uid.is_zero() {
+        return Err(HTTPError::new(401, "unauthorized".to_string()));
+    }
+    Ok(())
 }

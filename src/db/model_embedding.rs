@@ -78,7 +78,7 @@ impl Embedding {
             .payload
             .insert("cid".to_string(), qdrant::Value::from(self.cid.to_string()));
         point.payload.insert(
-            "lang".to_string(),
+            "language".to_string(),
             qdrant::Value::from(self.language.to_639_3()),
         );
         point
@@ -227,7 +227,7 @@ impl Embedding {
 //             doc2.columns.get_as::<String>("gid"),
 //             Ok("jarvis00000000000000".to_string())
 //         );
-//         assert_eq!(doc2.columns.get_as::<String>("lang"), Ok(lang.to_string()));
+//         assert_eq!(doc2.columns.get_as::<String>("language"), Ok(lang.to_string()));
 //         assert_eq!(
 //             doc2.columns.get_as::<BTreeMap<String, i32>>("tokens"),
 //             Ok(BTreeMap::from([("ada2".to_string(), 998i32)]))

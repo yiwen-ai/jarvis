@@ -7,7 +7,7 @@ FROM --platform=${BUILDPLATFORM:-linux/amd64} tonistiigi/xx AS xx
 # Utilizing Docker layer caching with `cargo-chef`.
 #
 # https://www.lpalmieri.com/posts/fast-rust-docker-builds/
-FROM --platform=${BUILDPLATFORM:-linux/amd64} lukemathwalker/cargo-chef:latest-rust-1.70.0 AS chef
+FROM --platform=${BUILDPLATFORM:-linux/amd64} lukemathwalker/cargo-chef:latest-rust-slim-bookworm AS chef
 
 
 FROM chef AS planner
@@ -38,7 +38,14 @@ RUN case "$BUILDPLATFORM" in \
 ARG TARGETPLATFORM
 ENV TARGETPLATFORM=${TARGETPLATFORM:-linux/amd64}
 
-RUN xx-apt-get install -y gcc g++ libc6-dev
+RUN xx-apt-get install -y gcc g++ libc6-dev pkg-config libssl-dev
+
+ENV OPENSSL_INCLUDE_DIR=/usr/include/openssl
+ENV AARCH64_UNKNOWN_LINUX_GNU_OPENSSL_INCLUDE_DIR=/usr/include/aarch64-linux-gnu/openssl
+ENV X86_64_UNKNOWN_LINUX_GNU_OPENSSL_INCLUDE_DIR=/usr/include/x86_64-linux-gnu/openssl
+ENV AARCH64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu
+ENV X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu
+ENV OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu
 
 COPY --from=planner /src/recipe.json recipe.json
 RUN xx-cargo chef cook --release --recipe-path recipe.json
@@ -47,14 +54,19 @@ COPY . .
 RUN xx-cargo build --release \
     && mv target/$(xx-cargo --print-target-triple)/release /src/release
 
-FROM debian:12-slim AS runtime
+FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
-    && apt-get install -y ca-certificates tzdata curl \
+    && apt-get install -y ca-certificates tzdata curl openssl \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+ENV AARCH64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu
+ENV OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu
 
 WORKDIR /app
 COPY --from=builder /src/config ./config
 COPY --from=builder /src/release/jarvis ./
+ENV CONFIG_FILE_PATH=./config/config.toml
+
 ENTRYPOINT ["./jarvis"]

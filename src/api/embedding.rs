@@ -78,9 +78,9 @@ pub async fn search(
     }
 
     if let Some(language) = input.language.map(|v| v.unwrap()) {
-        ctx.set("lang", language.to_639_3().into()).await;
+        ctx.set("language", language.to_639_3().into()).await;
         let fc = qdrant::FieldCondition {
-            key: "lang".to_string(),
+            key: "language".to_string(),
             r#match: Some(qdrant::Match {
                 match_value: Some(qdrant::MatchValue::Text(language.to_639_3().to_string())),
             }),
@@ -393,7 +393,7 @@ pub async fn public(
         ("action", "make_public".into()),
         ("gid", gid.to_string().into()),
         ("cid", cid.to_string().into()),
-        ("lang", lang.to_639_3().into()),
+        ("language", lang.to_639_3().into()),
         ("version", input.version.into()),
     ])
     .await;
