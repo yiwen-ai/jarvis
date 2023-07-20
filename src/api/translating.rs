@@ -74,6 +74,74 @@ pub async fn get(
     })))
 }
 
+pub async fn list_languages(
+    to: PackObject<()>,
+    State(_): State<Arc<AppState>>,
+) -> Result<PackObject<SuccessResponse<Vec<(String, String, String)>>>, HTTPError> {
+    let languages = isolang::languages();
+    let mut list: Vec<(String, String, String)> = Vec::new();
+    for lg in languages {
+        if lg.to_639_1().is_none() || lg.to_autonym().is_none() {
+            continue;
+        }
+
+        list.push((
+            lg.to_639_3().to_string(),
+            lg.to_name().to_string(),
+            lg.to_autonym().unwrap().to_string(),
+        ));
+    }
+    Ok(to.with(SuccessResponse {
+        total_size: Some(list.len() as u64),
+        next_page_token: None,
+        result: list,
+    }))
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct DetectLangInput {
+    pub gid: PackObject<xid::Id>,       // group id, content belong to
+    pub language: PackObject<Language>, // the fallback language if detect failed
+    pub content: TEContentList,
+}
+
+pub async fn detect_lang(
+    State(app): State<Arc<AppState>>,
+    Extension(ctx): Extension<Arc<ReqContext>>,
+    to: PackObject<DetectLangInput>,
+) -> Result<PackObject<SuccessResponse<TEOutput>>, HTTPError> {
+    let (to, input) = to.unpack();
+    input.validate()?;
+
+    let gid = *input.gid;
+    let fallback_lang = *input.language;
+
+    ctx.set_kvs(vec![
+        ("action", "detect_lang".into()),
+        ("gid", gid.to_string().into()),
+    ])
+    .await;
+
+    if input.content.is_empty() {
+        return Err(HTTPError::new(
+            400,
+            "Empty content to translate".to_string(),
+        ));
+    }
+
+    let mut detected_language = app.ld.detect_lang(&input.content.detect_lang_string());
+    if detected_language == Language::Und {
+        detected_language = fallback_lang;
+    }
+    ctx.set("language", detected_language.to_639_3().to_string().into())
+        .await;
+
+    Ok(to.with(SuccessResponse::new(TEOutput {
+        cid: to.with(xid::Id::default()),
+        detected_language: to.with(detected_language),
+    })))
+}
+
 pub async fn create(
     State(app): State<Arc<AppState>>,
     Extension(ctx): Extension<Arc<ReqContext>>,

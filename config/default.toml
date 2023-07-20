@@ -12,7 +12,7 @@ cert_file = ""
 # key file path to enable https, example: "/etc/https/mydomain.key"
 key_file = ""
 # The maximum number of seconds to wait for graceful shutdown.
-graceful_shutdown = 10
+graceful_shutdown = 60
 
 [scylla]
 # Scylla server nodes

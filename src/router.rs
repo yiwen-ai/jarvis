@@ -30,7 +30,15 @@ pub async fn new(cfg: conf::Conf) -> anyhow::Result<(Arc<api::AppState>, Router)
             "/v1/translating",
             Router::new()
                 .route("/", routing::post(api::translating::create))
-                .route("/get", routing::post(api::translating::get)),
+                .route("/get", routing::post(api::translating::get))
+                .route(
+                    "/list_languages",
+                    routing::get(api::translating::list_languages),
+                )
+                .route(
+                    "/detect_language",
+                    routing::post(api::translating::detect_lang),
+                ),
         )
         .nest(
             "/v1/embedding",
