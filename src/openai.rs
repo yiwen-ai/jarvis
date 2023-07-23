@@ -240,7 +240,12 @@ impl OpenAI {
         Ok((usage.total_tokens, content))
     }
 
-    pub async fn embedding(&self, rid: &str, user: &str, input: &str) -> Result<(u32, Vec<f32>)> {
+    pub async fn embedding(
+        &self,
+        rid: &str,
+        user: &str,
+        input: &Vec<String>,
+    ) -> Result<(u32, Vec<Vec<f32>>)> {
         let start = Instant::now();
         let res = self.azure_embedding(rid, user, input).await;
 
@@ -270,21 +275,46 @@ impl OpenAI {
         }
 
         let res = res.unwrap();
-        let embedding = &res.data[0];
+        if input.len() != res.data.len() {
+            let err = format!(
+                "embedding content array length not match, expected {}, got {}",
+                input.len(),
+                res.data.len()
+            );
+            log::error!(target: "embedding",
+                action = "call_openai",
+                elapsed = start.elapsed().as_millis() as u64,
+                rid = rid,
+                prompt_tokens = res.usage.prompt_tokens,
+                total_tokens = res.usage.total_tokens,
+                embedding_size = res.data.len();
+                "{}", err,
+            );
+
+            return Err(Error::new(HTTPError {
+                code: 500,
+                message: err,
+                data: None,
+            }));
+        }
+
         log::info!(target: "embedding",
             action = "call_openai",
             elapsed = start.elapsed().as_millis() as u64,
             rid = rid,
             prompt_tokens = res.usage.prompt_tokens,
             total_tokens = res.usage.total_tokens,
-            embedding_size = embedding.embedding.len();
+            embedding_size = res.data.len();
             "",
         );
 
-        Ok((res.usage.total_tokens, embedding.embedding.clone()))
+        Ok((
+            res.usage.total_tokens,
+            res.data.into_iter().map(|v| v.embedding).collect(),
+        ))
     }
 
-    // Max tokens: 4096
+    // Max tokens: 16k
     async fn azure_translate(
         &self,
         rid: &str,
@@ -300,7 +330,7 @@ impl OpenAI {
         };
 
         let mut req_body = CreateChatCompletionRequestArgs::default()
-        .max_tokens(4096u16)
+        .max_tokens(16000u16)
         .temperature(0f32)
         .messages([
             ChatCompletionRequestMessageArgs::default()
@@ -375,7 +405,7 @@ impl OpenAI {
         &self,
         rid: &str,
         user: &str,
-        input: &str,
+        input: &Vec<String>, // max length: 16
     ) -> Result<CreateEmbeddingResponse> {
         let mut req_body = CreateEmbeddingRequestArgs::default().input(input).build()?;
         if !user.is_empty() {

@@ -3,7 +3,6 @@ use isolang::Language;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-
 use axum_web::object::PackObject;
 
 use crate::db::{self, qdrant};
@@ -19,12 +18,16 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 // dashes (------) is a horizontal rule, work as a top section separator
 static SECTION_SEPARATOR: &str = "------";
 
-static TRANSLATE_SECTION_TOKENS: usize = 1800;
-static TRANSLATE_HIGH_TOKENS: usize = 2000;
+// gpt-35-16k
+static TRANSLATE_SECTION_TOKENS: usize = 6000;
+static TRANSLATE_HIGH_TOKENS: usize = 8000;
 
 // https://community.openai.com/t/embedding-text-length-vs-accuracy/96564
-static EMBEDDING_SECTION_TOKENS: usize = 400;
-static EMBEDDING_HIGH_TOKENS: usize = 600;
+static EMBEDDING_SECTION_TOKENS: usize = 600;
+static EMBEDDING_HIGH_TOKENS: usize = 800;
+// https://learn.microsoft.com/zh-cn/azure/ai-services/openai/how-to/switching-endpoints#azure-openai-embeddings-multiple-input-support
+static EMBEDDING_MAX_ARRAY: usize = 16;
+static EMBEDDING_MAX_TOKENS: usize = 7600;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -118,7 +121,6 @@ impl TEContent {
 
 #[derive(Serialize)]
 pub struct TEUnit {
-    index: usize,
     pub tokens: usize,
     pub content: TEContentList,
 }
@@ -166,7 +168,8 @@ impl TEUnit {
 
 pub trait TESegmenter {
     fn detect_lang_string(&self) -> String;
-    fn segment(&self, tokens_len: fn(&str) -> usize, for_embedding: bool) -> Vec<TEUnit>;
+    fn segment(&self, tokens_len: fn(&str) -> usize) -> Vec<TEUnit>;
+    fn segment_for_embedding(&self, tokens_len: fn(&str) -> usize) -> Vec<Vec<TEUnit>>;
 }
 
 impl TESegmenter for TEContentList {
@@ -182,34 +185,20 @@ impl TESegmenter for TEContentList {
         detect_lang
     }
 
-    fn segment(&self, tokens_len: fn(&str) -> usize, for_embedding: bool) -> Vec<TEUnit> {
+    fn segment(&self, tokens_len: fn(&str) -> usize) -> Vec<TEUnit> {
         let mut list: Vec<TEUnit> = Vec::new();
         let mut unit: TEUnit = TEUnit {
-            index: 0,
             tokens: 0,
             content: Vec::new(),
-        };
-
-        let section_tokens = if for_embedding {
-            EMBEDDING_SECTION_TOKENS
-        } else {
-            TRANSLATE_SECTION_TOKENS
-        };
-
-        let high_tokens = if for_embedding {
-            EMBEDDING_HIGH_TOKENS
-        } else {
-            TRANSLATE_HIGH_TOKENS
         };
 
         for c in self {
             if c.texts.is_empty() {
                 if c.id == SECTION_SEPARATOR {
                     // segment embedding content by section separator
-                    if unit.tokens > section_tokens && unit.index >= list.len() {
+                    if unit.tokens >= TRANSLATE_SECTION_TOKENS {
                         list.push(unit);
                         unit = TEUnit {
-                            index: list.len(),
                             tokens: 0,
                             content: Vec::new(),
                         };
@@ -219,18 +208,13 @@ impl TESegmenter for TEContentList {
                 continue;
             }
 
-            let ctl = if for_embedding {
-                tokens_len(&c.to_embedding_string())
-            } else {
-                tokens_len(&c.to_translating_string())
-            };
+            let ctl = tokens_len(&c.to_translating_string());
 
-            if unit.tokens + ctl > high_tokens {
+            if unit.tokens + ctl >= TRANSLATE_HIGH_TOKENS {
                 unit.tokens += ctl;
                 unit.content.push(c.clone());
                 list.push(unit);
                 unit = TEUnit {
-                    index: list.len(),
                     tokens: 0,
                     content: Vec::new(),
                 };
@@ -240,8 +224,75 @@ impl TESegmenter for TEContentList {
             }
         }
 
-        if unit.index >= list.len() {
+        if unit.tokens > 0 {
             list.push(unit);
+        }
+
+        list
+    }
+
+    fn segment_for_embedding(&self, tokens_len: fn(&str) -> usize) -> Vec<Vec<TEUnit>> {
+        let mut list: Vec<Vec<TEUnit>> = Vec::new();
+        let mut group: Vec<TEUnit> = Vec::new();
+        let mut group_tokens: usize = 0;
+        let mut unit: TEUnit = TEUnit {
+            tokens: 0,
+            content: Vec::new(),
+        };
+
+        for c in self {
+            if c.texts.is_empty() {
+                if c.id == SECTION_SEPARATOR {
+                    // segment embedding content by section separator
+                    if unit.tokens >= EMBEDDING_SECTION_TOKENS {
+                        group_tokens += unit.tokens;
+                        group.push(unit);
+                        unit = TEUnit {
+                            tokens: 0,
+                            content: Vec::new(),
+                        };
+                    }
+
+                    if group_tokens >= EMBEDDING_MAX_TOKENS || group.len() >= EMBEDDING_MAX_ARRAY {
+                        list.push(group);
+                        group_tokens = 0;
+                        group = Vec::new();
+                    }
+                }
+
+                continue;
+            }
+
+            let ctl = tokens_len(&c.to_embedding_string());
+
+            if unit.tokens + ctl >= EMBEDDING_HIGH_TOKENS {
+                unit.tokens += ctl;
+                unit.content.push(c.clone());
+                group_tokens += unit.tokens;
+                group.push(unit);
+                unit = TEUnit {
+                    tokens: 0,
+                    content: Vec::new(),
+                };
+
+                if group_tokens >= EMBEDDING_MAX_TOKENS || group.len() >= EMBEDDING_MAX_ARRAY {
+                    list.push(group);
+                    group_tokens = 0;
+                    group = Vec::new();
+                }
+            } else {
+                unit.tokens += ctl;
+                unit.content.push(c.clone());
+            }
+        }
+
+        if unit.tokens > 0 {
+            group_tokens += unit.tokens;
+            group.push(unit);
+        }
+
+        if group_tokens > 0 {
+            list.push(group)
         }
 
         list

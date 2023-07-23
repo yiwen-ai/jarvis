@@ -195,7 +195,7 @@ pub async fn create(
         input.version as i16,
         detected_language,
         target_lang,
-        content.segment(tokenizer::tokens_len, false),
+        content.segment(tokenizer::tokens_len),
     ));
 
     Ok(to.with(SuccessResponse::new(TEOutput {

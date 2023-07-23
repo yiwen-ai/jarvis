@@ -54,7 +54,7 @@ pub async fn search(
 
     let embedding_res = app
         .ai
-        .embedding(&ctx.rid, &ctx.user.to_string(), &input.input)
+        .embedding(&ctx.rid, &ctx.user.to_string(), &vec![input.input])
         .await
         .map_err(HTTPError::from)?;
 
@@ -102,14 +102,15 @@ pub async fn search(
     }
 
     let f = if !f.must.is_empty() { Some(f) } else { None };
+    let embedding = embedding_res.1[0].to_owned();
     let qd_res = if has_gid {
         app.qdrant
-            .search_points(embedding_res.1, f)
+            .search_points(embedding, f)
             .await
             .map_err(HTTPError::from)?
     } else {
         app.qdrant
-            .search_public_points(embedding_res.1, f)
+            .search_public_points(embedding, f)
             .await
             .map_err(HTTPError::from)?
     };
@@ -200,7 +201,7 @@ pub async fn create(
 
     let detected_language = app.ld.detect_lang(&input.content.detect_lang_string());
     // start embedding in the background immediately.
-    let embedding_input = input.content.segment(tokenizer::tokens_len, true);
+    let embedding_input = input.content.segment_for_embedding(tokenizer::tokens_len);
     tokio::spawn(embedding(
         app,
         ctx.rid.clone(),
@@ -226,19 +227,20 @@ async fn embedding(
     cid: xid::Id,
     version: i16,
     lang: Language,
-    input: Vec<TEUnit>,
+    input: Vec<Vec<TEUnit>>,
 ) {
     let pieces = input.len();
     let start = Instant::now();
     let tokio_embedding = app.embedding.clone();
     let mut total_tokens: i32 = 0;
 
-    for unit in input {
+    for unit_group in input {
         let unit_elapsed = start.elapsed().as_millis() as u64;
-        let res = app
-            .ai
-            .embedding(&rid, &user, &unit.to_embedding_string())
-            .await;
+        let embedding_input: Vec<String> = unit_group
+            .iter()
+            .map(|unit| unit.to_embedding_string())
+            .collect();
+        let res = app.ai.embedding(&rid, &user, &embedding_input).await;
 
         let ai_elapsed = start.elapsed().as_millis() as u64 - unit_elapsed;
         match res {
@@ -269,88 +271,87 @@ async fn embedding(
 
         let (used_tokens, embeddings) = res.unwrap();
         total_tokens += used_tokens as i32;
-        let mut doc = db::Embedding::from(cid, lang, unit.ids().join(","));
-        doc.gid = gid;
-        doc.version = version;
+        for (i, unit) in unit_group.iter().enumerate() {
+            let mut doc = db::Embedding::from(cid, lang, unit.ids().join(","));
+            doc.gid = gid;
+            doc.version = version;
 
-        if let Err(err) = ciborium::into_writer(&unit.content, &mut doc.content) {
-            log::warn!(target: "embedding",
-                action = "to_cbor",
-                rid = rid,
-                gid = gid.to_string(),
-                cid = cid.to_string(),
-                lang = lang.to_string(),
-                elapsed = ai_elapsed;
-                "{}", err,
-            );
-            continue;
-        }
-
-        let res = doc.save(&app.scylla).await;
-        let scylla_elapsed = start.elapsed().as_millis() as u64 - ai_elapsed - unit_elapsed;
-        match res {
-            Err(err) => {
-                log::error!(target: "embedding",
-                    action = "to_scylla",
-                    rid = &rid,
+            if let Err(err) = ciborium::into_writer(&unit.content, &mut doc.content) {
+                log::warn!(target: "embedding",
+                    action = "to_cbor",
+                    rid = rid,
                     gid = gid.to_string(),
                     cid = cid.to_string(),
                     lang = lang.to_string(),
-                    used_tokens = used_tokens,
-                    ids = log::as_serde!(unit.ids()),
-                    ai_elapsed = ai_elapsed,
-                    elapsed = scylla_elapsed;
+                    elapsed = ai_elapsed;
                     "{}", err,
                 );
+                continue;
             }
-            Ok(_) => {
-                log::info!(target: "embedding",
-                    action = "to_scylla",
-                    rid = &rid,
-                    gid = gid.to_string(),
-                    cid = cid.to_string(),
-                    lang = lang.to_string(),
-                    used_tokens = used_tokens,
-                    ids = log::as_serde!(unit.ids()),
-                    ai_elapsed = ai_elapsed,
-                    elapsed = scylla_elapsed;
-                    "success",
-                );
 
-                match app
-                    .qdrant
-                    .add_points(vec![doc.qdrant_point(embeddings)])
-                    .await
-                {
-                    Ok(()) => {
-                        log::info!(target: "qdrant",
-                            action = "to_qdrant",
-                            rid = rid,
-                            gid = gid.to_string(),
-                            cid = cid.to_string(),
-                            lang = lang.to_string(),
-                            ai_elapsed = ai_elapsed,
-                            scylla_elapsed = scylla_elapsed,
-                            elapsed = start.elapsed().as_millis() as u64 - scylla_elapsed - ai_elapsed - unit_elapsed;
-                            "",
-                        )
-                    }
-                    Err(err) => {
-                        log::error!(target: "qdrant",
-                            action = "to_qdrant",
-                            rid = rid,
-                            gid = gid.to_string(),
-                            cid = cid.to_string(),
-                            lang = lang.to_string(),
-                            ai_elapsed = ai_elapsed,
-                            scylla_elapsed = scylla_elapsed,
-                            elapsed = start.elapsed().as_millis() as u64- scylla_elapsed- ai_elapsed - unit_elapsed;
-                            "{}", err,
-                        )
+            let res = doc.save(&app.scylla).await;
+            let scylla_elapsed = start.elapsed().as_millis() as u64 - ai_elapsed - unit_elapsed;
+            match res {
+                Err(err) => {
+                    log::error!(target: "embedding",
+                        action = "to_scylla",
+                        rid = &rid,
+                        gid = gid.to_string(),
+                        cid = cid.to_string(),
+                        lang = lang.to_string(),
+                        used_tokens = used_tokens,
+                        ids = log::as_serde!(unit.ids()),
+                        ai_elapsed = ai_elapsed,
+                        elapsed = scylla_elapsed;
+                        "{}", err,
+                    );
+                }
+                Ok(_) => {
+                    log::info!(target: "embedding",
+                        action = "to_scylla",
+                        rid = &rid,
+                        gid = gid.to_string(),
+                        cid = cid.to_string(),
+                        lang = lang.to_string(),
+                        used_tokens = used_tokens,
+                        ids = log::as_serde!(unit.ids()),
+                        ai_elapsed = ai_elapsed,
+                        elapsed = scylla_elapsed;
+                        "success",
+                    );
+
+                    let vectors = embeddings[i].to_vec();
+                    match app.qdrant.add_points(vec![doc.qdrant_point(vectors)]).await {
+                        Ok(()) => {
+                            log::info!(target: "qdrant",
+                                action = "to_qdrant",
+                                rid = rid,
+                                gid = gid.to_string(),
+                                cid = cid.to_string(),
+                                lang = lang.to_string(),
+                                ai_elapsed = ai_elapsed,
+                                scylla_elapsed = scylla_elapsed,
+                                elapsed = start.elapsed().as_millis() as u64 - scylla_elapsed - ai_elapsed - unit_elapsed;
+                                "",
+                            )
+                        }
+                        Err(err) => {
+                            log::error!(target: "qdrant",
+                                action = "to_qdrant",
+                                rid = rid,
+                                gid = gid.to_string(),
+                                cid = cid.to_string(),
+                                lang = lang.to_string(),
+                                ai_elapsed = ai_elapsed,
+                                scylla_elapsed = scylla_elapsed,
+                                elapsed = start.elapsed().as_millis() as u64- scylla_elapsed- ai_elapsed - unit_elapsed;
+                                "{}", err,
+                            )
+                        }
                     }
                 }
-            }
-        };
+            };
+        }
     }
 
     log::info!(target: "embedding",

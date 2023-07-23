@@ -30,7 +30,7 @@ api_key = ""
 resource_name = "yiwen"
 api_key = ""
 api_version = "2023-05-15"
-chat_model = "gpt-35-turbo"
+chat_model = "gpt-35-16k"
 embedding_model = "embedding-ada-002"
 
 [azureai.agent]
