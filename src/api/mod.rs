@@ -10,6 +10,7 @@ use crate::lang::LanguageDetector;
 use crate::openai;
 
 pub mod embedding;
+pub mod summarizing;
 pub mod translating;
 
 pub const APP_NAME: &str = env!("CARGO_PKG_NAME");
@@ -21,6 +22,10 @@ static SECTION_SEPARATOR: &str = "------";
 // gpt-35-16k
 static TRANSLATE_SECTION_TOKENS: usize = 6000;
 static TRANSLATE_HIGH_TOKENS: usize = 8000;
+
+// gpt-35-16k
+static SUMMARIZE_SECTION_TOKENS: usize = 14000;
+static SUMMARIZE_HIGH_TOKENS: usize = 15000;
 
 // https://community.openai.com/t/embedding-text-length-vs-accuracy/96564
 static EMBEDDING_SECTION_TOKENS: usize = 600;
@@ -103,13 +108,13 @@ impl TEContent {
         serde_json::to_string(&self.texts).expect("TEContent::to_translating_string error")
     }
 
-    pub fn to_embedding_string(&self) -> String {
+    pub fn to_string(&self, sep: char) -> String {
         let mut tes = String::new();
         for t in &self.texts {
             for s in t.split_whitespace() {
                 if !s.is_empty() {
                     if !tes.is_empty() {
-                        tes.push(' ');
+                        tes.push(sep);
                     }
                     tes.push_str(s);
                 }
@@ -143,11 +148,16 @@ impl TEUnit {
     }
 
     pub fn to_embedding_string(&self) -> String {
-        let mut tes: Vec<String> = Vec::new();
+        let mut tes: String = String::new();
         for c in &self.content {
-            tes.push(c.to_embedding_string());
+            tes.push_str(c.to_string(' ').trim());
+            if tes.ends_with('.') {
+                tes.push(' ');
+            } else {
+                tes.push_str(". ");
+            }
         }
-        tes.join("; ")
+        tes.trim().to_string()
     }
 
     pub fn replace_texts(&self, input: &Vec<Vec<String>>) -> TEContentList {
@@ -169,6 +179,7 @@ impl TEUnit {
 pub trait TESegmenter {
     fn detect_lang_string(&self) -> String;
     fn segment(&self, tokens_len: fn(&str) -> usize) -> Vec<TEUnit>;
+    fn segment_for_summarizing(&self, tokens_len: fn(&str) -> usize) -> Vec<String>;
     fn segment_for_embedding(&self, tokens_len: fn(&str) -> usize) -> Vec<Vec<TEUnit>>;
 }
 
@@ -178,7 +189,7 @@ impl TESegmenter for TEContentList {
 
         for c in self {
             if detect_lang.len() < 1024 {
-                detect_lang.push_str(c.to_embedding_string().as_str());
+                detect_lang.push_str(c.to_string('\n').as_str());
                 detect_lang.push('\n');
             }
         }
@@ -231,6 +242,44 @@ impl TESegmenter for TEContentList {
         list
     }
 
+    fn segment_for_summarizing(&self, tokens_len: fn(&str) -> usize) -> Vec<String> {
+        let mut list: Vec<String> = Vec::new();
+        let mut unit: Vec<String> = Vec::new();
+        let mut tokens = 0usize;
+
+        for c in self {
+            if c.texts.is_empty() {
+                if c.id == SECTION_SEPARATOR && tokens >= SUMMARIZE_SECTION_TOKENS {
+                    list.push(unit.join("\n"));
+                    tokens = 0;
+                    unit.truncate(0);
+                }
+
+                continue;
+            }
+
+            let strs = c.to_string(' ');
+            let ctl = tokens_len(&strs);
+
+            if tokens + ctl >= SUMMARIZE_HIGH_TOKENS {
+                tokens += ctl;
+                unit.push(strs);
+                list.push(unit.join("\n"));
+                tokens = 0;
+                unit.truncate(0);
+            } else {
+                tokens += ctl;
+                unit.push(strs);
+            }
+        }
+
+        if tokens > 0 {
+            list.push(unit.join("\n"));
+        }
+
+        list
+    }
+
     fn segment_for_embedding(&self, tokens_len: fn(&str) -> usize) -> Vec<Vec<TEUnit>> {
         let mut list: Vec<Vec<TEUnit>> = Vec::new();
         let mut group: Vec<TEUnit> = Vec::new();
@@ -263,7 +312,7 @@ impl TESegmenter for TEContentList {
                 continue;
             }
 
-            let ctl = tokens_len(&c.to_embedding_string());
+            let ctl = tokens_len(&c.to_string(' '));
 
             if unit.tokens + ctl >= EMBEDDING_HIGH_TOKENS {
                 unit.tokens += ctl;
