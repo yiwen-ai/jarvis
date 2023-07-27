@@ -18,6 +18,7 @@ use crate::api::{AppState, TEContentList, TEOutput, TESegmenter, TEUnit};
 #[derive(Debug, Deserialize, Validate)]
 pub struct SearchInput {
     pub input: String,                          // the input text
+    pub public: Option<bool>,                   // search public content
     pub gid: Option<PackObject<xid::Id>>,       // group id, content belong to
     pub language: Option<PackObject<Language>>, // the target language
     pub cid: Option<PackObject<xid::Id>>,       // creation id
@@ -68,7 +69,11 @@ pub async fn search(
         must_not: Vec::new(),
     };
 
-    let has_gid = input.gid.is_some();
+    let mut public = input.public.unwrap_or(false);
+    if input.gid.is_none() {
+        public = true;
+    }
+
     if let Some(gid) = input.gid.clone().map(|v| v.unwrap()) {
         ctx.set("gid", gid.to_string().into()).await;
         let fc = qdrant::FieldCondition {
@@ -107,14 +112,14 @@ pub async fn search(
 
     let f = if !f.must.is_empty() { Some(f) } else { None };
     let embedding = embedding_res.1[0].to_owned();
-    let qd_res = if has_gid {
+    let qd_res = if public {
         app.qdrant
-            .search_points(embedding, f)
+            .search_public_points(embedding, f)
             .await
             .map_err(HTTPError::from)?
     } else {
         app.qdrant
-            .search_public_points(embedding, f)
+            .search_points(embedding, f)
             .await
             .map_err(HTTPError::from)?
     };
