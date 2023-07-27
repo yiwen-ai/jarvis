@@ -6,7 +6,7 @@ use validator::Validate;
 
 use axum_web::context::ReqContext;
 use axum_web::erring::{HTTPError, SuccessResponse};
-use axum_web::object::PackObject;
+use axum_web::object::{cbor_from_slice, PackObject};
 
 use crate::db::{self};
 use crate::lang::Language;
@@ -23,7 +23,7 @@ pub struct TranslatingInput {
     pub version: u16,
 
     pub model: Option<String>,
-    pub content: Option<TEContentList>,
+    pub content: Option<PackObject<Vec<u8>>>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -34,7 +34,7 @@ pub struct TranslatingOutput {
     pub version: u16,
     pub model: String,
     pub tokens: u32,
-    pub content: TEContentList,
+    pub content: PackObject<Vec<u8>>,
 }
 
 pub async fn get(
@@ -60,8 +60,6 @@ pub async fn get(
 
     let mut doc = db::Translating::with_pk(gid, cid, language, input.version as i16);
     doc.get_one(&app.scylla, vec![]).await?;
-    let content: TEContentList = ciborium::from_reader(&doc.content[..])
-        .map_err(|err| HTTPError::new(500, err.to_string()))?;
 
     Ok(to.with(SuccessResponse::new(TranslatingOutput {
         gid: to.with(doc.gid),
@@ -70,7 +68,7 @@ pub async fn get(
         version: doc.version as u16,
         model: doc.model,
         tokens: doc.tokens as u32,
-        content,
+        content: to.with(doc.content),
     })))
 }
 
@@ -102,7 +100,7 @@ pub async fn list_languages(
 pub struct DetectLangInput {
     pub gid: PackObject<xid::Id>,       // group id, content belong to
     pub language: PackObject<Language>, // the fallback language if detect failed
-    pub content: TEContentList,
+    pub content: PackObject<Vec<u8>>,
 }
 
 pub async fn detect_lang(
@@ -122,14 +120,20 @@ pub async fn detect_lang(
     ])
     .await;
 
-    if input.content.is_empty() {
+    let content: TEContentList = cbor_from_slice(&input.content).map_err(|e| HTTPError {
+        code: 400,
+        message: format!("Invalid content: {}", e),
+        data: None,
+    })?;
+
+    if content.is_empty() {
         return Err(HTTPError::new(
             400,
             "Empty content to translate".to_string(),
         ));
     }
 
-    let mut detected_language = app.ld.detect_lang(&input.content.detect_lang_string());
+    let mut detected_language = app.ld.detect_lang(&content.detect_lang_string());
     if detected_language == Language::Und {
         detected_language = fallback_lang;
     }
@@ -167,7 +171,12 @@ pub async fn create(
         return Err(HTTPError::new(400, "Invalid language".to_string()));
     }
 
-    let content = input.content.unwrap_or_default();
+    let content: TEContentList =
+        cbor_from_slice(&input.content.unwrap_or_default()).map_err(|e| HTTPError {
+            code: 400,
+            message: format!("Invalid content: {}", e),
+            data: None,
+        })?;
     if content.is_empty() {
         return Err(HTTPError::new(
             400,

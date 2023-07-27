@@ -5,7 +5,7 @@ use validator::Validate;
 
 use axum_web::context::ReqContext;
 use axum_web::erring::{HTTPError, SuccessResponse};
-use axum_web::object::PackObject;
+use axum_web::object::{cbor_from_slice, PackObject};
 
 use crate::lang::Language;
 use crate::tokenizer;
@@ -15,7 +15,7 @@ use crate::api::{AppState, TEContentList, TESegmenter};
 #[derive(Debug, Deserialize, Validate)]
 pub struct SummarizingInput {
     pub language: PackObject<Language>, // the content language
-    pub content: TEContentList,
+    pub content: PackObject<Vec<u8>>,
 }
 
 pub async fn create(
@@ -38,7 +38,13 @@ pub async fn create(
         return Err(HTTPError::new(400, "Invalid language".to_string()));
     }
 
-    let content = input.content.segment_for_summarizing(tokenizer::tokens_len);
+    let content: TEContentList = cbor_from_slice(&input.content).map_err(|e| HTTPError {
+        code: 400,
+        message: format!("Invalid content: {}", e),
+        data: None,
+    })?;
+
+    let content = content.segment_for_summarizing(tokenizer::tokens_len);
     if content.is_empty() {
         return Err(HTTPError::new(
             400,

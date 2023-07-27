@@ -7,7 +7,7 @@ use validator::Validate;
 
 use axum_web::context::ReqContext;
 use axum_web::erring::{HTTPError, SuccessResponse};
-use axum_web::object::PackObject;
+use axum_web::object::{cbor_from_slice, PackObject};
 
 use crate::db::{self, qdrant};
 use crate::lang::Language;
@@ -25,13 +25,12 @@ pub struct SearchInput {
 
 #[derive(Debug, Serialize, Validate)]
 pub struct SearchOutput {
+    pub gid: PackObject<xid::Id>,       // group id, content belong to
     pub cid: PackObject<xid::Id>,       // creation id
     pub language: PackObject<Language>, // the target language
     pub version: u16,
     pub ids: String,
-    pub content: TEContentList,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gid: Option<PackObject<xid::Id>>, // group id, content belong to
+    pub content: PackObject<Vec<u8>>,
 }
 
 pub async fn search(
@@ -46,7 +45,7 @@ pub async fn search(
         return Err(HTTPError::new(400, "Input is empty".to_string()));
     }
 
-    let q: Vec<&str> = input.input.split_whitespace().into_iter().collect();
+    let q: Vec<&str> = input.input.split_whitespace().collect();
     let q = q.join(" ");
     let tokens = tokenizer::tokens_len(&q);
 
@@ -154,15 +153,13 @@ pub async fn search(
             .await
             .map_err(HTTPError::from)?;
 
-        let content: TEContentList = ciborium::from_reader(&doc.content[..])
-            .map_err(|err| HTTPError::new(500, err.to_string()))?;
         res.push(SearchOutput {
+            gid: to.with(doc.gid),
             cid: to.with(doc.cid),
             language: to.with(doc.language),
             version: doc.version as u16,
             ids: doc.ids,
-            gid: input.gid.clone(),
-            content,
+            content: to.with(doc.content),
         });
     }
 
@@ -175,7 +172,7 @@ pub struct EmbeddingInput {
     pub cid: PackObject<xid::Id>, // creation id
     #[validate(range(min = 1, max = 10000))]
     pub version: u16,
-    pub content: TEContentList,
+    pub content: PackObject<Vec<u8>>,
 }
 
 pub async fn create(
@@ -204,9 +201,15 @@ pub async fn create(
         ));
     }
 
-    let detected_language = app.ld.detect_lang(&input.content.detect_lang_string());
+    let content: TEContentList = cbor_from_slice(&input.content).map_err(|e| HTTPError {
+        code: 400,
+        message: format!("Invalid content: {}", e),
+        data: None,
+    })?;
+
+    let detected_language = app.ld.detect_lang(&content.detect_lang_string());
     // start embedding in the background immediately.
-    let embedding_input = input.content.segment_for_embedding(tokenizer::tokens_len);
+    let embedding_input = content.segment_for_embedding(tokenizer::tokens_len);
     tokio::spawn(embedding(
         app,
         ctx.rid.clone(),
