@@ -46,15 +46,20 @@ pub async fn search(
         return Err(HTTPError::new(400, "Input is empty".to_string()));
     }
 
-    ctx.set_kvs(vec![
-        ("action", "search".into()),
-        ("input", input.input.len().into()),
-    ])
-    .await;
+    let q: Vec<&str> = input.input.split_whitespace().into_iter().collect();
+    let q = q.join(" ");
+    let tokens = tokenizer::tokens_len(&q);
+
+    ctx.set_kvs(vec![("action", "search".into()), ("tokens", tokens.into())])
+        .await;
+
+    if tokens < 5 {
+        return Ok(to.with(SuccessResponse::new(vec![])));
+    }
 
     let embedding_res = app
         .ai
-        .embedding(&ctx.rid, &ctx.user.to_string(), &vec![input.input])
+        .embedding(&ctx.rid, &ctx.user.to_string(), &vec![q.clone()])
         .await
         .map_err(HTTPError::from)?;
 
