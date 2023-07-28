@@ -175,6 +175,7 @@ pub async fn search(
 pub struct EmbeddingInput {
     pub gid: PackObject<xid::Id>, // group id, content belong to
     pub cid: PackObject<xid::Id>, // creation id
+    pub language: PackObject<Language>,
     #[validate(range(min = 1, max = 10000))]
     pub version: u16,
     pub content: PackObject<Vec<u8>>,
@@ -190,11 +191,17 @@ pub async fn create(
 
     let gid = *input.gid;
     let cid = *input.cid;
+    let language = *input.language;
+
+    if language == Language::Und {
+        return Err(HTTPError::new(400, "Invalid language".to_string()));
+    }
 
     ctx.set_kvs(vec![
         ("action", "create_embedding".into()),
         ("gid", gid.to_string().into()),
         ("cid", cid.to_string().into()),
+        ("language", language.to_639_3().into()),
         ("version", input.version.into()),
     ])
     .await;
@@ -212,7 +219,6 @@ pub async fn create(
         data: None,
     })?;
 
-    let detected_language = app.ld.detect_lang(&content.detect_lang_string());
     // start embedding in the background immediately.
     let embedding_input = content.segment_for_embedding(tokenizer::tokens_len);
     tokio::spawn(embedding(
@@ -222,13 +228,13 @@ pub async fn create(
         gid,
         cid,
         input.version as i16,
-        detected_language,
+        language,
         embedding_input,
     ));
 
     Ok(to.with(SuccessResponse::new(TEOutput {
         cid: to.with(cid),
-        detected_language: to.with(detected_language),
+        detected_language: to.with(language),
     })))
 }
 
