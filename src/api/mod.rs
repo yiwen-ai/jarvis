@@ -21,18 +21,18 @@ static SECTION_SEPARATOR: &str = "------";
 
 // gpt-35-16k
 static TRANSLATE_SECTION_TOKENS: usize = 6000;
-static TRANSLATE_HIGH_TOKENS: usize = 8000;
+static TRANSLATE_HIGH_TOKENS: usize = 7000;
 
 // gpt-35-16k
 static SUMMARIZE_SECTION_TOKENS: usize = 14000;
-static SUMMARIZE_HIGH_TOKENS: usize = 15000;
+static SUMMARIZE_HIGH_TOKENS: usize = 14000;
 
 // https://community.openai.com/t/embedding-text-length-vs-accuracy/96564
 static EMBEDDING_SECTION_TOKENS: usize = 600;
 static EMBEDDING_HIGH_TOKENS: usize = 800;
 // https://learn.microsoft.com/zh-cn/azure/ai-services/openai/how-to/switching-endpoints#azure-openai-embeddings-multiple-input-support
 static EMBEDDING_MAX_ARRAY: usize = 16;
-static EMBEDDING_MAX_TOKENS: usize = 7600;
+static EMBEDDING_MAX_TOKENS: usize = 7000;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -185,15 +185,15 @@ pub trait TESegmenter {
 
 impl TESegmenter for TEContentList {
     fn detect_lang_string(&self) -> String {
-        let mut detect_lang = String::new();
+        let mut detect_language = String::new();
 
         for c in self {
-            if detect_lang.len() < 1024 {
-                detect_lang.push_str(c.to_string('\n').as_str());
-                detect_lang.push('\n');
+            if detect_language.len() < 1024 {
+                detect_language.push_str(c.to_string('\n').as_str());
+                detect_language.push('\n');
             }
         }
-        detect_lang
+        detect_language
     }
 
     fn segment(&self, tokens_len: fn(&str) -> usize) -> Vec<TEUnit> {

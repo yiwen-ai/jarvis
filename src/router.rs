@@ -42,7 +42,9 @@ pub async fn new(cfg: conf::Conf) -> anyhow::Result<(Arc<api::AppState>, Router)
         )
         .nest(
             "/v1/summarizing",
-            Router::new().route("/", routing::post(api::summarizing::create)),
+            Router::new()
+                .route("/", routing::post(api::summarizing::create))
+                .route("/get", routing::post(api::summarizing::get)),
         )
         .nest(
             "/v1/embedding",

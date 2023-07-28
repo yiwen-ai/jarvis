@@ -269,7 +269,7 @@ async fn embedding(
                     rid = &rid,
                     gid = gid.to_string(),
                     cid = cid.to_string(),
-                    lang = lang.to_string(),
+                    language = lang.to_string(),
                     elapsed = ai_elapsed;
                     "{}", err.to_string(),
                 );
@@ -281,7 +281,7 @@ async fn embedding(
                     rid = &rid,
                     gid = gid.to_string(),
                     cid = cid.to_string(),
-                    lang = lang.to_string(),
+                    language = lang.to_string(),
                     elapsed = ai_elapsed;
                     "success",
                 );
@@ -301,7 +301,7 @@ async fn embedding(
                     rid = rid,
                     gid = gid.to_string(),
                     cid = cid.to_string(),
-                    lang = lang.to_string(),
+                    language = lang.to_string(),
                     elapsed = ai_elapsed;
                     "{}", err,
                 );
@@ -317,7 +317,7 @@ async fn embedding(
                         rid = &rid,
                         gid = gid.to_string(),
                         cid = cid.to_string(),
-                        lang = lang.to_string(),
+                        language = lang.to_string(),
                         used_tokens = used_tokens,
                         ids = log::as_serde!(unit.ids()),
                         ai_elapsed = ai_elapsed,
@@ -331,7 +331,7 @@ async fn embedding(
                         rid = &rid,
                         gid = gid.to_string(),
                         cid = cid.to_string(),
-                        lang = lang.to_string(),
+                        language = lang.to_string(),
                         used_tokens = used_tokens,
                         ids = log::as_serde!(unit.ids()),
                         ai_elapsed = ai_elapsed,
@@ -347,7 +347,7 @@ async fn embedding(
                                 rid = rid,
                                 gid = gid.to_string(),
                                 cid = cid.to_string(),
-                                lang = lang.to_string(),
+                                language = lang.to_string(),
                                 ai_elapsed = ai_elapsed,
                                 scylla_elapsed = scylla_elapsed,
                                 elapsed = start.elapsed().as_millis() as u64 - scylla_elapsed - ai_elapsed - unit_elapsed;
@@ -360,7 +360,7 @@ async fn embedding(
                                 rid = rid,
                                 gid = gid.to_string(),
                                 cid = cid.to_string(),
-                                lang = lang.to_string(),
+                                language = lang.to_string(),
                                 ai_elapsed = ai_elapsed,
                                 scylla_elapsed = scylla_elapsed,
                                 elapsed = start.elapsed().as_millis() as u64- scylla_elapsed- ai_elapsed - unit_elapsed;
@@ -378,7 +378,7 @@ async fn embedding(
         rid = &rid,
         gid = gid.to_string(),
         cid = cid.to_string(),
-        lang = lang.to_string(),
+        language = lang.to_string(),
         elapsed = start.elapsed().as_millis() as u64,
         pieces = pieces,
         used_tokens = total_tokens;
@@ -407,13 +407,13 @@ pub async fn public(
 
     let gid = *input.gid;
     let cid = *input.cid;
-    let lang = *input.language;
+    let language = *input.language;
 
     ctx.set_kvs(vec![
         ("action", "make_public".into()),
         ("gid", gid.to_string().into()),
         ("cid", cid.to_string().into()),
-        ("language", lang.to_639_3().into()),
+        ("language", language.to_639_3().into()),
         ("version", input.version.into()),
     ])
     .await;
@@ -421,7 +421,7 @@ pub async fn public(
         &app.scylla,
         cid,
         gid,
-        lang,
+        language,
         input.version as i16,
         vec!["cid".to_string()],
     )
@@ -441,7 +441,7 @@ pub async fn public(
                     rid = rid,
                     gid = gid.to_string(),
                     cid = cid.to_string(),
-                    lang = lang.to_string(),
+                    language = language.to_string(),
                     elapsed = start.elapsed().as_millis() as u64;
                     "success",
                 )
@@ -452,7 +452,7 @@ pub async fn public(
                     rid = rid,
                     gid = gid.to_string(),
                     cid = cid.to_string(),
-                    lang = lang.to_string(),
+                    language = language.to_string(),
                     elapsed = start.elapsed().as_millis() as u64;
                     "{}", err,
                 )

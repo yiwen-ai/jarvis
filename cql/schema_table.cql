@@ -14,6 +14,22 @@ CREATE TABLE IF NOT EXISTS translating (
     AND compression = {'sstable_compression': 'LZ4Compressor'}
     AND default_time_to_live = 0;
 
+CREATE TABLE IF NOT EXISTS summarizing (
+    gid      BLOB,     -- group id, content belong to
+    cid      BLOB,     -- creation id, 12 bytes, https://docs.rs/xid/latest/xid/
+    language TEXT,     -- content's language, ISO 639-3
+    version  SMALLINT, -- creation version
+    model    TEXT,     -- model used for translating, example: "gpt3.5"
+    tokens   INT,      -- tokens uåsed, example: {"gpt3.5": 1299}
+    summary  TEXT,     -- summary
+    PRIMARY KEY (gid, cid, language, version)
+) WITH CLUSTERING ORDER BY (cid DESC, language ASC, version DESC)
+    AND caching = {'enabled': 'true'}
+    AND comment = 'content summarizing'
+    AND compaction = {'class': 'SizeTieredCompactionStrategy'}
+    AND compression = {'sstable_compression': 'LZ4Compressor'}
+    AND default_time_to_live = 0;
+
 CREATE TABLE IF NOT EXISTS embedding (
     uuid     BLOB, -- 16 bytes, SHA3-256(cid+lang+ids)[..16], used for qdrant
     cid      BLOB, -- creation id, 12 bytes, https://docs.rs/xid/latest/xid/

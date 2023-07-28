@@ -1,14 +1,13 @@
 use axum::{extract::State, Extension};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 use validator::Validate;
 
 use axum_web::context::ReqContext;
 use axum_web::erring::{HTTPError, SuccessResponse};
 use axum_web::object::{cbor_from_slice, PackObject};
 
-use crate::db::{self};
+use crate::db;
 use crate::lang::Language;
 use crate::tokenizer;
 
@@ -112,7 +111,7 @@ pub async fn detect_lang(
     input.validate()?;
 
     let gid = *input.gid;
-    let fallback_lang = *input.language;
+    let fallback_language = *input.language;
 
     ctx.set_kvs(vec![
         ("action", "detect_lang".into()),
@@ -135,7 +134,7 @@ pub async fn detect_lang(
 
     let mut detected_language = app.ld.detect_lang(&content.detect_lang_string());
     if detected_language == Language::Und {
-        detected_language = fallback_lang;
+        detected_language = fallback_language;
     }
     ctx.set("language", detected_language.to_639_3().to_string().into())
         .await;
@@ -156,18 +155,18 @@ pub async fn create(
 
     let gid = *input.gid;
     let cid = *input.cid;
-    let target_lang = *input.language;
+    let target_language = *input.language;
 
     ctx.set_kvs(vec![
         ("action", "create_translating".into()),
         ("gid", gid.to_string().into()),
         ("cid", cid.to_string().into()),
-        ("language", target_lang.to_639_3().to_string().into()),
+        ("language", target_language.to_639_3().to_string().into()),
         ("version", input.version.into()),
     ])
     .await;
 
-    if target_lang == Language::Und {
+    if target_language == Language::Und {
         return Err(HTTPError::new(400, "Invalid language".to_string()));
     }
 
@@ -185,12 +184,12 @@ pub async fn create(
     }
 
     let detected_language = app.ld.detect_lang(&content.detect_lang_string());
-    if detected_language == target_lang {
+    if detected_language == target_language {
         return Err(HTTPError::new(
             400,
             format!(
                 "No need to translate from '{}' to '{}'",
-                detected_language, target_lang
+                detected_language, target_language
             ),
         ));
     }
@@ -203,7 +202,7 @@ pub async fn create(
         cid,
         input.version as i16,
         detected_language,
-        target_lang,
+        target_language,
         content.segment(tokenizer::tokens_len),
     ));
 
@@ -229,14 +228,20 @@ async fn translate(
     let tokio_translating = app.translating.clone();
     let mut content_list: TEContentList = Vec::new();
     let mut used_tokens: usize = 0;
-    let origin_lang = detected_language.to_name();
-    let lang = target_lang.to_name();
+    let origin_language = detected_language.to_name();
+    let language = target_lang.to_name();
 
     for unit in input {
         let unit_elapsed = start.elapsed().as_millis() as u64;
         let res = app
             .ai
-            .translate(&rid, &user, origin_lang, lang, &unit.to_translating_list())
+            .translate(
+                &rid,
+                &user,
+                origin_language,
+                language,
+                &unit.to_translating_list(),
+            )
             .await;
         let ai_elapsed = start.elapsed().as_millis() as u64 - unit_elapsed;
         match res {
@@ -246,21 +251,21 @@ async fn translate(
                     rid = &rid,
                     gid = gid.to_string(),
                     cid = cid.to_string(),
-                    lang = lang.to_string(),
-                    ver = version,
+                    language = language.to_string(),
+                    version = version,
                     elapsed = ai_elapsed;
                     "{}", err.to_string(),
                 );
                 return;
             }
             Ok(_) => {
-                log::info!(target: "embedding",
+                log::info!(target: "summarizing",
                     action = "call_openai",
                     rid = &rid,
                     gid = gid.to_string(),
                     cid = cid.to_string(),
-                    lang = lang.to_string(),
-                    ver = version,
+                    language = language.to_string(),
+                    version = version,
                     elapsed = ai_elapsed;
                     "success",
                 );
@@ -283,8 +288,8 @@ async fn translate(
             rid = &rid,
             gid = gid.to_string(),
             cid = cid.to_string(),
-            lang = lang.to_string(),
-            ver = version,
+            language = language.to_string(),
+            version = version,
             elapsed = start.elapsed().as_millis() as u64,
             pieces = pieces;
             "{}", err,
@@ -299,8 +304,8 @@ async fn translate(
                 rid = &rid,
                 gid = gid.to_string(),
                 cid = cid.to_string(),
-                lang = lang.to_string(),
-                ver = version,
+                language = language.to_string(),
+                version = version,
                 elapsed = start.elapsed().as_millis() as u64,
                 pieces = pieces;
                 "{}", err,
@@ -312,8 +317,8 @@ async fn translate(
                 rid = &rid,
                 gid = gid.to_string(),
                 cid = cid.to_string(),
-                lang = lang.to_string(),
-                ver = version,
+                language = language.to_string(),
+                version = version,
                 elapsed = start.elapsed().as_millis() as u64,
                 pieces = pieces;
                 "exists",
@@ -325,8 +330,8 @@ async fn translate(
                 rid = &rid,
                 gid = gid.to_string(),
                 cid = cid.to_string(),
-                lang = lang.to_string(),
-                ver = version,
+                language = language.to_string(),
+                version = version,
                 elapsed = start.elapsed().as_millis() as u64,
                 pieces = pieces;
                 "success",
