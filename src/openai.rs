@@ -296,6 +296,7 @@ impl OpenAI {
             prompt_tokens = usage.prompt_tokens,
             completion_tokens = usage.completion_tokens,
             total_tokens = usage.total_tokens,
+            summary_length = content.len(),
             finish_reason = finish_reason;
             "",
         );
@@ -471,7 +472,7 @@ impl OpenAI {
         text: &str,
     ) -> Result<CreateChatCompletionResponse> {
         let mut req_body = CreateChatCompletionRequestArgs::default()
-            .max_tokens(16000u16)
+            .max_tokens(16384u16)
             .temperature(0f32)
             .messages([
                 ChatCompletionRequestMessageArgs::default()

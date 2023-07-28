@@ -141,52 +141,21 @@ async fn summarize(
     let pieces = input.len();
     let start = Instant::now();
     let tokio_translating = app.translating.clone();
-    let mut output: Vec<String> = Vec::new();
     let mut used_tokens: usize = 0;
 
+    let mut output = String::new();
     for c in input {
         let unit_elapsed = start.elapsed().as_millis() as u64;
-        let res = app.ai.summarize(&rid, &user, language.to_name(), &c).await;
-        let ai_elapsed = start.elapsed().as_millis() as u64 - unit_elapsed;
-        match res {
-            Err(err) => {
-                log::error!(target: "summarizing",
-                    action = "call_openai",
-                    rid = &rid,
-                    gid = gid.to_string(),
-                    cid = cid.to_string(),
-                    language = language.to_string(),
-                    version = version,
-                    elapsed = ai_elapsed;
-                    "{}", err.to_string(),
-                );
-                return;
-            }
-            Ok(_) => {
-                log::info!(target: "summarizing",
-                    action = "call_openai",
-                    rid = &rid,
-                    gid = gid.to_string(),
-                    cid = cid.to_string(),
-                    language = language.to_string(),
-                    version = version,
-                    elapsed = ai_elapsed;
-                    "success",
-                );
-            }
-        }
-        let res = res.unwrap();
-        used_tokens += res.0 as usize;
-        output.push(res.1)
-    }
+        let text = if output.is_empty() {
+            c.to_owned()
+        } else {
+            output.clone() + "\n" + &c
+        };
 
-    if output.len() > 1 {
-        let unit_elapsed = start.elapsed().as_millis() as u64;
         let res = app
             .ai
-            .summarize(&rid, &user, language.to_name(), &output.join("\n"))
+            .summarize(&rid, &user, language.to_name(), &text)
             .await;
-
         let ai_elapsed = start.elapsed().as_millis() as u64 - unit_elapsed;
         match res {
             Err(err) => {
@@ -217,15 +186,14 @@ async fn summarize(
         }
         let res = res.unwrap();
         used_tokens += res.0 as usize;
-        output.truncate(0);
-        output.push(res.1)
+        output = res.1
     }
 
     // save target lang doc to db
     let mut doc = db::Summarizing::with_pk(gid, cid, language, version);
     doc.model = "gpt3.5".to_string();
     doc.tokens = used_tokens as i32;
-    doc.summary = output[0].to_owned();
+    doc.summary = output;
 
     match doc.save(&app.scylla).await {
         Err(err) => {
