@@ -394,7 +394,7 @@ impl OpenAI {
         };
 
         let mut req_body = CreateChatCompletionRequestArgs::default()
-        .max_tokens(16000u16)
+        .max_tokens(9000u16)
         .temperature(0f32)
         .messages([
             ChatCompletionRequestMessageArgs::default()
@@ -472,7 +472,7 @@ impl OpenAI {
         text: &str,
     ) -> Result<CreateChatCompletionResponse> {
         let mut req_body = CreateChatCompletionRequestArgs::default()
-            .max_tokens(16384u16)
+            .max_tokens(1000u16)
             .temperature(0f32)
             .messages([
                 ChatCompletionRequestMessageArgs::default()
