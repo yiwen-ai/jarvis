@@ -24,8 +24,8 @@ static TRANSLATE_SECTION_TOKENS: usize = 6000;
 static TRANSLATE_HIGH_TOKENS: usize = 7000;
 
 // gpt-35-16k
-static SUMMARIZE_SECTION_TOKENS: usize = 6000;
-static SUMMARIZE_HIGH_TOKENS: usize = 7000;
+static SUMMARIZE_SECTION_TOKENS: usize = 13000;
+static SUMMARIZE_HIGH_TOKENS: usize = 14000;
 
 // https://community.openai.com/t/embedding-text-length-vs-accuracy/96564
 static EMBEDDING_SECTION_TOKENS: usize = 600;
