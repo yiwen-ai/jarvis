@@ -5,7 +5,8 @@ use validator::Validate;
 
 use axum_web::context::ReqContext;
 use axum_web::erring::{HTTPError, SuccessResponse};
-use axum_web::object::{cbor_from_slice, PackObject};
+use axum_web::object::{cbor_from_slice, cbor_to_vec, PackObject};
+use scylla_orm::ColumnsMap;
 
 use crate::db;
 use crate::lang::Language;
@@ -33,6 +34,7 @@ pub struct TranslatingOutput {
     pub version: u16,
     pub model: String,
     pub tokens: u32,
+    pub error: String,
     pub content: PackObject<Vec<u8>>,
 }
 
@@ -68,6 +70,7 @@ pub async fn get(
         model: doc.model,
         tokens: doc.tokens as u32,
         content: to.with(doc.content),
+        error: doc.error,
     })))
 }
 
@@ -246,6 +249,11 @@ async fn translate(
         let ai_elapsed = start.elapsed().as_millis() as u64 - unit_elapsed;
         match res {
             Err(err) => {
+                let mut doc = db::Translating::with_pk(gid, cid, target_lang, version);
+                let mut cols = ColumnsMap::with_capacity(1);
+                cols.set_as("error", &err.to_string());
+                let _ = doc.upsert_fields(&app.scylla, cols).await;
+
                 log::error!(target: "translating",
                     action = "call_openai",
                     rid = &rid,
@@ -259,7 +267,7 @@ async fn translate(
                 return;
             }
             Ok(_) => {
-                log::info!(target: "summarizing",
+                log::info!(target: "translating",
                     action = "call_openai",
                     rid = &rid,
                     gid = gid.to_string(),
@@ -279,10 +287,8 @@ async fn translate(
 
     // save target lang doc to db
     let mut doc = db::Translating::with_pk(gid, cid, target_lang, version);
-    doc.model = "gpt3.5".to_string();
-    doc.tokens = used_tokens as i32;
-
-    if let Err(err) = ciborium::into_writer(&content_list, &mut doc.content) {
+    let content = cbor_to_vec(&content_list);
+    if content.is_err() {
         log::warn!(target: "translating",
             action = "to_cbor",
             rid = &rid,
@@ -292,12 +298,17 @@ async fn translate(
             version = version,
             elapsed = start.elapsed().as_millis() as u64,
             pieces = pieces;
-            "{}", err,
+            "{}", content.unwrap_err().to_string(),
         );
         return;
     }
+    let mut cols = ColumnsMap::with_capacity(4);
+    cols.set_as("model", &"gpt3.5".to_string());
+    cols.set_as("tokens", &(used_tokens as i32));
+    cols.set_as("content", &content.unwrap());
+    cols.set_as("error", &"".to_string());
 
-    match doc.save(&app.scylla).await {
+    match doc.upsert_fields(&app.scylla, cols).await {
         Err(err) => {
             log::error!(target: "translating",
                 action = "to_scylla",
@@ -311,20 +322,7 @@ async fn translate(
                 "{}", err,
             );
         }
-        Ok(false) => {
-            log::warn!(target: "translating",
-                action = "to_scylla",
-                rid = &rid,
-                gid = gid.to_string(),
-                cid = cid.to_string(),
-                language = language.to_string(),
-                version = version,
-                elapsed = start.elapsed().as_millis() as u64,
-                pieces = pieces;
-                "exists",
-            );
-        }
-        Ok(true) => {
+        Ok(_) => {
             log::info!(target: "translating",
                 action = "finish",
                 rid = &rid,

@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS translating (
     model    TEXT,     -- model used for translating, example: "gpt3.5"
     tokens   INT,      -- tokens uåsed, example: {"gpt3.5": 1299}
     content  BLOB,     -- a well pruned content in CBOR format
+    error    TEXT,     -- error message
     PRIMARY KEY (gid, cid, language, version)
 ) WITH CLUSTERING ORDER BY (cid DESC, language ASC, version DESC)
     AND caching = {'enabled': 'true'}
@@ -22,6 +23,7 @@ CREATE TABLE IF NOT EXISTS summarizing (
     model    TEXT,     -- model used for translating, example: "gpt3.5"
     tokens   INT,      -- tokens uåsed, example: {"gpt3.5": 1299}
     summary  TEXT,     -- summary
+    error    TEXT,    -- error message
     PRIMARY KEY (gid, cid, language, version)
 ) WITH CLUSTERING ORDER BY (cid DESC, language ASC, version DESC)
     AND caching = {'enabled': 'true'}

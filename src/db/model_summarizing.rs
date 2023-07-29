@@ -15,6 +15,7 @@ pub struct Summarizing {
     pub model: String,
     pub tokens: i32,
     pub summary: String,
+    pub error: String,
 
     pub _fields: Vec<String>, // selected fields，`_` 前缀字段会被 CqlOrm 忽略
 }
@@ -92,39 +93,58 @@ impl Summarizing {
         Ok(())
     }
 
-    pub async fn save(&mut self, db: &scylladb::ScyllaDB) -> anyhow::Result<bool> {
-        let fields = Self::fields();
-        self._fields = fields.clone();
+    // pub async fn save(&mut self, db: &scylladb::ScyllaDB) -> anyhow::Result<bool> {
+    //     let fields = Self::fields();
+    //     self._fields = fields.clone();
 
-        let mut cols_name: Vec<&str> = Vec::with_capacity(fields.len());
-        let mut vals_name: Vec<&str> = Vec::with_capacity(fields.len());
-        let mut params: Vec<&CqlValue> = Vec::with_capacity(fields.len());
-        let cols = self.to();
+    //     let mut cols_name: Vec<&str> = Vec::with_capacity(fields.len());
+    //     let mut vals_name: Vec<&str> = Vec::with_capacity(fields.len());
+    //     let mut params: Vec<&CqlValue> = Vec::with_capacity(fields.len());
+    //     let cols = self.to();
 
-        for field in &fields {
-            cols_name.push(field);
-            vals_name.push("?");
-            params.push(cols.get(field).unwrap());
+    //     for field in &fields {
+    //         cols_name.push(field);
+    //         vals_name.push("?");
+    //         params.push(cols.get(field).unwrap());
+    //     }
+
+    //     let query = format!(
+    //         "INSERT INTO summarizing ({}) VALUES ({})",
+    //         cols_name.join(","),
+    //         vals_name.join(",")
+    //     );
+
+    //     let _ = db.execute(query, params).await?;
+    //     Ok(true)
+    // }
+
+    pub async fn upsert_fields(
+        &mut self,
+        db: &scylladb::ScyllaDB,
+        cols: ColumnsMap,
+    ) -> anyhow::Result<bool> {
+        let valid_fields = vec!["model", "tokens", "summary", "error"];
+
+        let mut set_fields: Vec<String> = Vec::with_capacity(cols.len());
+        let mut params: Vec<CqlValue> = Vec::with_capacity(cols.len() + 4);
+        for (k, v) in cols.iter() {
+            if !valid_fields.contains(&k.as_str()) {
+                return Err(HTTPError::new(400, format!("Invalid field: {}", k)).into());
+            }
+            set_fields.push(format!("{}=?", k));
+            params.push(v.to_owned());
         }
 
         let query = format!(
-            "INSERT INTO summarizing ({}) VALUES ({}) IF NOT EXISTS",
-            cols_name.join(","),
-            vals_name.join(",")
+            "UPDATE summarizing SET {} WHERE gid=? AND cid=? AND language=? AND version=?",
+            set_fields.join(",")
         );
+        params.push(self.gid.to_cql());
+        params.push(self.cid.to_cql());
+        params.push(self.language.to_cql());
+        params.push(self.version.to_cql());
 
-        let res = db.execute(query, params).await?;
-        if !extract_applied(res) {
-            return Err(HTTPError::new(
-                409,
-                format!(
-                    "{}, {}, {}, {} already exists",
-                    self.gid, self.cid, self.language, self.version
-                ),
-            )
-            .into());
-        }
-
+        let _ = db.execute(query, params).await?;
         Ok(true)
     }
 }

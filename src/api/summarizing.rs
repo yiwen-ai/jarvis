@@ -6,6 +6,7 @@ use validator::Validate;
 use axum_web::context::ReqContext;
 use axum_web::erring::{HTTPError, SuccessResponse};
 use axum_web::object::{cbor_from_slice, PackObject};
+use scylla_orm::ColumnsMap;
 
 use crate::db;
 use crate::lang::Language;
@@ -34,6 +35,7 @@ pub struct SummarizingOutput {
     pub model: String,
     pub tokens: u32,
     pub summary: String,
+    pub error: String,
 }
 
 pub async fn get(
@@ -68,6 +70,7 @@ pub async fn get(
         model: doc.model,
         tokens: doc.tokens as u32,
         summary: doc.summary,
+        error: doc.error,
     })))
 }
 
@@ -159,6 +162,11 @@ async fn summarize(
         let ai_elapsed = start.elapsed().as_millis() as u64 - unit_elapsed;
         match res {
             Err(err) => {
+                let mut doc = db::Summarizing::with_pk(gid, cid, language, version);
+                let mut cols = ColumnsMap::with_capacity(1);
+                cols.set_as("error", &err.to_string());
+                let _ = doc.upsert_fields(&app.scylla, cols).await;
+
                 log::error!(target: "summarizing",
                     action = "call_openai",
                     rid = &rid,
@@ -191,11 +199,13 @@ async fn summarize(
 
     // save target lang doc to db
     let mut doc = db::Summarizing::with_pk(gid, cid, language, version);
-    doc.model = "gpt3.5".to_string();
-    doc.tokens = used_tokens as i32;
-    doc.summary = output;
+    let mut cols = ColumnsMap::with_capacity(4);
+    cols.set_as("model", &"gpt3.5".to_string());
+    cols.set_as("tokens", &(used_tokens as i32));
+    cols.set_as("summary", &output);
+    cols.set_as("error", &"".to_string());
 
-    match doc.save(&app.scylla).await {
+    match doc.upsert_fields(&app.scylla, cols).await {
         Err(err) => {
             log::error!(target: "summarizing",
                 action = "to_scylla",
@@ -210,21 +220,7 @@ async fn summarize(
                 "{}", err,
             );
         }
-        Ok(false) => {
-            log::warn!(target: "summarizing",
-                action = "to_scylla",
-                rid = &rid,
-                gid = gid.to_string(),
-                cid = cid.to_string(),
-                language = language.to_string(),
-                version = version,
-                elapsed = start.elapsed().as_millis() as u64,
-                summary = doc.summary.len(),
-                pieces = pieces;
-                "exists",
-            );
-        }
-        Ok(true) => {
+        Ok(_) => {
             log::info!(target: "summarizing",
                 action = "finish",
                 rid = &rid,

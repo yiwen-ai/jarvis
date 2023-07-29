@@ -4,7 +4,7 @@ use axum_web::erring::HTTPError;
 use scylla_orm::{ColumnsMap, CqlValue, ToCqlVal};
 use scylla_orm_macros::CqlOrm;
 
-use crate::db::{scylladb, scylladb::extract_applied};
+use crate::db::scylladb;
 
 #[derive(Debug, Default, Clone, CqlOrm)]
 pub struct Translating {
@@ -15,6 +15,7 @@ pub struct Translating {
     pub model: String,
     pub tokens: i32,
     pub content: Vec<u8>,
+    pub error: String,
 
     pub _fields: Vec<String>, // selected fields，`_` 前缀字段会被 CqlOrm 忽略
 }
@@ -92,106 +93,132 @@ impl Translating {
         Ok(())
     }
 
-    pub async fn save(&mut self, db: &scylladb::ScyllaDB) -> anyhow::Result<bool> {
-        let fields = Self::fields();
-        self._fields = fields.clone();
+    // pub async fn save(&mut self, db: &scylladb::ScyllaDB) -> anyhow::Result<bool> {
+    //     let fields = Self::fields();
+    //     self._fields = fields.clone();
 
-        let mut cols_name: Vec<&str> = Vec::with_capacity(fields.len());
-        let mut vals_name: Vec<&str> = Vec::with_capacity(fields.len());
-        let mut params: Vec<&CqlValue> = Vec::with_capacity(fields.len());
-        let cols = self.to();
+    //     let mut cols_name: Vec<&str> = Vec::with_capacity(fields.len());
+    //     let mut vals_name: Vec<&str> = Vec::with_capacity(fields.len());
+    //     let mut params: Vec<&CqlValue> = Vec::with_capacity(fields.len());
+    //     let cols = self.to();
 
-        for field in &fields {
-            cols_name.push(field);
-            vals_name.push("?");
-            params.push(cols.get(field).unwrap());
+    //     for field in &fields {
+    //         cols_name.push(field);
+    //         vals_name.push("?");
+    //         params.push(cols.get(field).unwrap());
+    //     }
+
+    //     let query = format!(
+    //         "INSERT INTO translating ({}) VALUES ({})",
+    //         cols_name.join(","),
+    //         vals_name.join(",")
+    //     );
+
+    //     let _ = db.execute(query, params).await?;
+    //     Ok(true)
+    // }
+
+    pub async fn upsert_fields(
+        &mut self,
+        db: &scylladb::ScyllaDB,
+        cols: ColumnsMap,
+    ) -> anyhow::Result<bool> {
+        let valid_fields = vec!["model", "tokens", "content", "error"];
+
+        let mut set_fields: Vec<String> = Vec::with_capacity(cols.len());
+        let mut params: Vec<CqlValue> = Vec::with_capacity(cols.len() + 4);
+        for (k, v) in cols.iter() {
+            if !valid_fields.contains(&k.as_str()) {
+                return Err(HTTPError::new(400, format!("Invalid field: {}", k)).into());
+            }
+            set_fields.push(format!("{}=?", k));
+            params.push(v.to_owned());
         }
 
         let query = format!(
-            "INSERT INTO translating ({}) VALUES ({}) IF NOT EXISTS",
-            cols_name.join(","),
-            vals_name.join(",")
+            "UPDATE translating SET {} WHERE gid=? AND cid=? AND language=? AND version=?",
+            set_fields.join(",")
         );
+        params.push(self.gid.to_cql());
+        params.push(self.cid.to_cql());
+        params.push(self.language.to_cql());
+        params.push(self.version.to_cql());
 
-        let res = db.execute(query, params).await?;
-        if !extract_applied(res) {
-            return Err(HTTPError::new(
-                409,
-                format!(
-                    "{}, {}, {}, {} already exists",
-                    self.gid, self.cid, self.language, self.version
-                ),
-            )
-            .into());
-        }
-
+        let _ = db.execute(query, params).await?;
         Ok(true)
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use std::str::FromStr;
-//     use tokio::sync::OnceCell;
+#[cfg(test)]
+mod tests {
+    use std::{str::FromStr, vec};
+    use tokio::sync::OnceCell;
 
-//     use crate::{conf, erring, model};
+    use crate::conf;
+    use crate::db::USER_JARVIS;
 
-//     use super::*;
+    use super::*;
 
-//     static DB: OnceCell<scylladb::ScyllaDB> = OnceCell::const_new();
+    static DB: OnceCell<scylladb::ScyllaDB> = OnceCell::const_new();
 
-//     async fn get_db() -> scylladb::ScyllaDB {
-//         let cfg = conf::Conf::new().unwrap_or_else(|err| panic!("config error: {}", err));
-//         let res = scylladb::ScyllaDB::new(cfg.scylla, "jarvis_test").await;
-//         res.unwrap()
-//     }
+    async fn get_db() -> scylladb::ScyllaDB {
+        let cfg = conf::Conf::new().unwrap_or_else(|err| panic!("config error: {}", err));
+        let res = scylladb::ScyllaDB::new(cfg.scylla, "jarvis_test").await;
+        res.unwrap()
+    }
 
-//     #[tokio::test(flavor = "current_thread")]
-//     #[ignore]
-//     async fn translating_model_works() {
-//         let db = DB.get_or_init(get_db).await;
-//         let cid = xid::new();
-//         let uid = xid::Id::from_str("jarvis00000000000000").unwrap();
-//         let mut doc = Translating::new(cid, 1, "English".to_string());
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore]
+    async fn translating_model_works() {
+        let db = DB.get_or_init(get_db).await;
+        let cid = xid::new();
+        let gid = xid::Id::from_str(USER_JARVIS).unwrap();
+        let mut doc = Translating::with_pk(gid, cid, Language::Eng, 1);
 
-//         let res = doc.fill(db, vec![]).await;
-//         assert!(res.is_err());
-//         assert_eq!(erring::HTTPError::from(res.unwrap_err()).code, 404);
+        let res = doc.get_one(db, vec![]).await;
+        assert!(res.is_err());
+        let err: HTTPError = res.unwrap_err().into();
+        assert_eq!(err.code, 404);
 
-//         let content: model::TEContentList =
-//             serde_json::from_str(r#"[{"id":"abcdef","texts":["hello world","你好，世界"]}]"#)
-//                 .unwrap();
-//         assert_eq!(content[0].texts[1], "你好，世界");
+        let content: Vec<u8> = vec![0x80];
 
-//         doc.columns.set_ascii("gid", &uid.to_string());
-//         doc.columns
-//             .set_in_cbor("content", &content)
-//             .map_err(erring::HTTPError::from)
-//             .unwrap();
+        let mut cols = ColumnsMap::with_capacity(4);
+        cols.set_as("model", &"gpt3.5".to_string());
+        cols.set_as("tokens", &(1000i32));
+        cols.set_as("content", &content);
 
-//         doc.save(db).await.unwrap();
+        doc.upsert_fields(db, cols).await.unwrap();
 
-//         let mut doc2 = Translating::new(cid, 1, "English".to_string());
-//         doc2.fill(db, vec![]).await.unwrap();
+        let mut doc2 = Translating::with_pk(gid, cid, Language::Eng, 1);
+        doc2.get_one(db, vec![]).await.unwrap();
 
-//         assert_eq!(
-//             doc2.columns.get_as::<String>("gid"),
-//             Ok("jarvis00000000000000".to_string())
-//         );
-//         let content2: model::TEContentList = doc2.columns.get_from_cbor("content").unwrap();
+        assert_eq!(doc2.tokens, 1000i32);
+        assert_eq!(doc2.content, content);
+        assert_eq!(doc2.error, "".to_string());
 
-//         assert_eq!(content2, content);
+        let mut doc3 = Translating::with_pk(gid, cid, Language::Eng, 1);
+        doc3.get_one(db, vec!["error".to_string()]).await.unwrap();
+        assert_eq!(doc3.tokens, 0i32);
+        assert_eq!(doc3.content.len(), 0);
+        assert_eq!(doc3.error, "".to_string());
 
-//         let mut doc3 = Translating::new(cid, 1, "English".to_string());
-//         doc3.fill(db, vec!["content"]).await.unwrap();
-//         assert!(!doc3.columns.has("gid"));
-//         assert!(!doc3.columns.has("tokens"));
-//         assert!(!doc3.columns.has("gpt4"));
-//         assert!(doc3.columns.has("content"));
-//         assert_eq!(
-//             doc3.columns.get_as::<Vec<u8>>("content").unwrap(),
-//             doc2.columns.get_as::<Vec<u8>>("content").unwrap()
-//         )
-//         // println!("doc: {:#?}", doc2);
-//     }
-// }
+        let mut cols = ColumnsMap::with_capacity(1);
+        cols.set_as("error", &"some error".to_string());
+        doc.upsert_fields(db, cols).await.unwrap();
+
+        let mut doc3 = Translating::with_pk(gid, cid, Language::Eng, 1);
+        doc3.get_one(db, vec![]).await.unwrap();
+        assert_eq!(doc3.tokens, 1000i32);
+        assert_eq!(doc3.content, content);
+        assert_eq!(doc3.error, "some error".to_string());
+
+        let mut doc = Translating::with_pk(gid, cid, Language::Eng, 2);
+        let mut cols = ColumnsMap::with_capacity(1);
+        cols.set_as("error", &"some error".to_string());
+        doc.upsert_fields(db, cols).await.unwrap();
+        doc.get_one(db, vec![]).await.unwrap();
+        assert_eq!(doc.tokens, 0i32);
+        assert_eq!(doc.content.len(), 0);
+        assert_eq!(doc.error, "some error".to_string());
+    }
+}
