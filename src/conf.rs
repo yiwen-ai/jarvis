@@ -33,8 +33,9 @@ pub struct AzureAI {
     pub resource_name: String,
     pub api_key: String,
     pub api_version: String,
-    pub chat_model: String,
     pub embedding_model: String,
+    pub summarize_model: String,
+    pub translate_model: String,
     pub agent: Agent,
 }
 

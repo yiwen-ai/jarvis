@@ -27,8 +27,9 @@ static X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
 pub struct OpenAI {
     client: Client,
-    azure_chat_url: reqwest::Url,
     azure_embedding_url: reqwest::Url,
+    azure_summarize_url: reqwest::Url,
+    azure_translate_url: reqwest::Url,
     use_agent: bool,
 }
 
@@ -75,14 +76,19 @@ impl OpenAI {
 
         Self {
             client: client.default_headers(headers).build().unwrap(),
-            azure_chat_url: reqwest::Url::parse(&format!(
-                "https://{}/openai/deployments/{}/chat/completions?api-version={}",
-                request_host, opts.chat_model, opts.api_version
-            ))
-            .unwrap(),
             azure_embedding_url: reqwest::Url::parse(&format!(
                 "https://{}/openai/deployments/{}/embeddings?api-version={}",
                 request_host, opts.embedding_model, opts.api_version
+            ))
+            .unwrap(),
+            azure_summarize_url: reqwest::Url::parse(&format!(
+                "https://{}/openai/deployments/{}/chat/completions?api-version={}",
+                request_host, opts.summarize_model, opts.api_version
+            ))
+            .unwrap(),
+            azure_translate_url: reqwest::Url::parse(&format!(
+                "https://{}/openai/deployments/{}/chat/completions?api-version={}",
+                request_host, opts.translate_model, opts.api_version
             ))
             .unwrap(),
             use_agent,
@@ -417,7 +423,7 @@ impl OpenAI {
         }
 
         let mut res = self
-            .request(self.azure_chat_url.clone(), rid, &req_body)
+            .request(self.azure_translate_url.clone(), rid, &req_body)
             .await?;
 
         // retry
@@ -425,7 +431,7 @@ impl OpenAI {
             sleep(Duration::from_secs(3)).await;
 
             res = self
-                .request(self.azure_chat_url.clone(), rid, &req_body)
+                .request(self.azure_translate_url.clone(), rid, &req_body)
                 .await?;
         }
 
@@ -468,7 +474,7 @@ impl OpenAI {
         }
     }
 
-    // Max tokens: 16k
+    // Max tokens: 4096
     async fn azure_summarize(
         &self,
         rid: &str,
@@ -477,7 +483,7 @@ impl OpenAI {
         text: &str,
     ) -> Result<CreateChatCompletionResponse> {
         let mut req_body = CreateChatCompletionRequestArgs::default()
-            .max_tokens(512u16)
+            .max_tokens(256u16)
             .temperature(0f32)
             .messages([
                 ChatCompletionRequestMessageArgs::default()
@@ -495,7 +501,7 @@ impl OpenAI {
         }
 
         let mut res = self
-            .request(self.azure_chat_url.clone(), rid, &req_body)
+            .request(self.azure_summarize_url.clone(), rid, &req_body)
             .await?;
 
         // retry
@@ -503,7 +509,7 @@ impl OpenAI {
             sleep(Duration::from_secs(3)).await;
 
             res = self
-                .request(self.azure_chat_url.clone(), rid, &req_body)
+                .request(self.azure_summarize_url.clone(), rid, &req_body)
                 .await?;
         }
 
