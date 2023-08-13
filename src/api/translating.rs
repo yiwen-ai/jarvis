@@ -135,10 +135,14 @@ pub async fn detect_lang(
         ));
     }
 
-    let mut detected_language = app.ld.detect_lang(&content.detect_lang_string());
+    let string = content.detect_lang_string();
+    ctx.set("input_size", string.len().into()).await;
+    let mut detected_language = app.ld.detect_lang(&string);
     if detected_language == Language::Und {
+        ctx.set("result", "failed".into()).await;
         detected_language = fallback_language;
     }
+
     ctx.set("language", detected_language.to_639_3().to_string().into())
         .await;
 

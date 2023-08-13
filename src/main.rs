@@ -1,13 +1,10 @@
 use std::{net::SocketAddr, sync::Arc};
 
-
 use structured_logger::{async_json::new_writer, Builder};
 use tokio::{
     io, signal,
     time::{sleep, Duration},
 };
-
-
 
 mod api;
 mod conf;

@@ -3,7 +3,7 @@ use async_openai::types::{
     ChatCompletionRequestMessageArgs, CreateChatCompletionRequestArgs,
     CreateChatCompletionResponse, CreateEmbeddingRequestArgs, CreateEmbeddingResponse, Role, Usage,
 };
-use axum::http::header::{HeaderMap, HeaderName, HeaderValue};
+use axum::http::header::{HeaderMap, HeaderName};
 
 use libflate::gzip::Encoder;
 use reqwest::{header, Client, ClientBuilder, Identity, Response};
@@ -612,7 +612,7 @@ impl OpenAI {
             .client
             .post(url)
             .header(header::ACCEPT_ENCODING, "gzip")
-            .header(X_REQUEST_ID.clone(), HeaderValue::from_str(rid)?);
+            .header(&X_REQUEST_ID, rid);
 
         let res = if self.use_agent && data.len() >= COMPRESS_MIN_LENGTH {
             use std::io::Write;
