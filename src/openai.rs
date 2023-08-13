@@ -113,7 +113,7 @@ impl OpenAI {
         if let Err(err) = res {
             match err.downcast::<HTTPError>() {
                 Ok(er) => {
-                    log::error!(target: "translate",
+                    log::error!(target: "translating",
                         action = "call_openai",
                         elapsed = start.elapsed().as_millis() as u64,
                         rid = rid,
@@ -126,7 +126,7 @@ impl OpenAI {
                 }
 
                 Err(er) => {
-                    log::error!(target: "translate",
+                    log::error!(target: "translating",
                         action = "call_openai",
                         elapsed = start.elapsed().as_millis() as u64,
                         rid = rid,
@@ -232,7 +232,7 @@ impl OpenAI {
             total_tokens: 0,
         });
 
-        log::info!(target: "translate",
+        log::info!(target: "translating",
             action = "call_openai",
             elapsed = start.elapsed().as_millis() as u64,
             rid = rid,
@@ -260,7 +260,7 @@ impl OpenAI {
         if let Err(err) = res {
             match err.downcast::<HTTPError>() {
                 Ok(er) => {
-                    log::error!(target: "summarize",
+                    log::error!(target: "summarizing",
                         action = "call_openai",
                         elapsed = start.elapsed().as_millis() as u64,
                         rid = rid,
@@ -273,7 +273,7 @@ impl OpenAI {
                 }
 
                 Err(er) => {
-                    log::error!(target: "summarize",
+                    log::error!(target: "summarizing",
                         action = "call_openai",
                         elapsed = start.elapsed().as_millis() as u64,
                         rid = rid,
@@ -295,7 +295,7 @@ impl OpenAI {
             total_tokens: 0,
         });
 
-        log::info!(target: "summarize",
+        log::info!(target: "summarizing",
             action = "call_openai",
             elapsed = start.elapsed().as_millis() as u64,
             rid = rid,

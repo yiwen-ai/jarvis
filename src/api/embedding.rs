@@ -24,7 +24,7 @@ pub struct SearchInput {
     pub cid: Option<PackObject<xid::Id>>,       // creation id
 }
 
-#[derive(Debug, Serialize, Validate)]
+#[derive(Debug, Default, Serialize, Validate)]
 pub struct SearchOutput {
     pub gid: PackObject<xid::Id>,       // group id, content belong to
     pub cid: PackObject<xid::Id>,       // creation id
@@ -124,6 +124,7 @@ pub async fn search(
             .map_err(HTTPError::from)?
     };
 
+    ctx.set("qd_results", qd_res.result.len().into()).await;
     let mut res: Vec<SearchOutput> = Vec::with_capacity(qd_res.result.len());
     for q in qd_res.result {
         let id = match q.id {
@@ -154,20 +155,33 @@ pub async fn search(
 
         let mut doc = db::Embedding::with_pk(id);
 
-        doc.get_one(&app.scylla, vec![])
-            .await
-            .map_err(HTTPError::from)?;
+        doc.get_one(
+            &app.scylla,
+            vec![
+                "gid".to_string(),
+                "cid".to_string(),
+                "language".to_string(),
+                "version".to_string(),
+            ],
+        )
+        .await
+        .map_err(HTTPError::from)?;
+
+        let to_cid = to.with(doc.cid);
+        if res.iter().any(|v| v.cid == to_cid) {
+            continue;
+        }
 
         res.push(SearchOutput {
             gid: to.with(doc.gid),
-            cid: to.with(doc.cid),
+            cid: to_cid,
             language: to.with(doc.language),
             version: doc.version as u16,
-            ids: doc.ids,
-            content: to.with(doc.content),
+            ..Default::default()
         });
     }
 
+    ctx.set("results", res.len().into()).await;
     Ok(to.with(SuccessResponse::new(res)))
 }
 
