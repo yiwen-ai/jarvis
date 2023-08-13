@@ -1,8 +1,7 @@
-use lingua::LanguageDetectorBuilder;
-
-// pub use lingua::IsoCode639_1;
-// pub use lingua::Language;
 pub use isolang::Language;
+use lingua::LanguageDetectorBuilder;
+use std::str::FromStr;
+
 pub struct LanguageDetector {
     detector: lingua::LanguageDetector,
 }
@@ -22,9 +21,9 @@ impl LanguageDetector {
 
     pub fn detect_lang(&self, text: &str) -> Language {
         match self.detect(text) {
-            Some(lang) => match Language::from_name(lang.iso_code_639_3().to_string().as_str()) {
-                Some(lang) => lang,
-                None => Language::default(),
+            Some(lang) => match Language::from_str(lang.iso_code_639_3().to_string().as_str()) {
+                Ok(lang) => lang,
+                Err(_) => Language::default(),
             },
             None => Language::default(),
         }
