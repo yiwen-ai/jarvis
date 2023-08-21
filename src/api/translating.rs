@@ -74,7 +74,7 @@ pub async fn get(
     })))
 }
 
-const IGNORE_LANGGUAGES: [&'static str; 5] = ["abk", "ava", "bak", "lim", "nya"];
+const IGNORE_LANGGUAGES: [&str; 5] = ["abk", "ava", "bak", "lim", "nya"];
 
 pub async fn list_languages(
     to: PackObject<()>,

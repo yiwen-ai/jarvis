@@ -1,6 +1,6 @@
 [package]
 name = "jarvis"
-version = "0.7.11"
+version = "0.7.12"
 edition = "2021"
 rust-version = "1.64"
 description = ""
@@ -38,7 +38,7 @@ isolang = { git = "https://github.com/yiwen-ai/isolang-rs.git", branch = "master
 libflate = "1"
 log = "0.4"
 mime = "0.3"
-scylla = "0.8"
+scylla = "0.9"
 serde = "1"
 serde_json = { version = "1.0", features = ["preserve_order"] }
 structured-logger = "1.0"

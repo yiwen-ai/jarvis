@@ -145,11 +145,10 @@ impl Embedding {
     ) -> anyhow::Result<Vec<Embedding>> {
         let fields = Self::select_fields(select_fields, true)?;
 
-        let query = scylladb::Query::new(format!(
+        let query = format!(
             "SELECT {} FROM embedding WHERE cid=? AND language=? AND version=? AND gid=? LIMIT 1000 ALLOW FILTERING BYPASS CACHE USING TIMEOUT 10s",
             fields.clone().join(",")
-        ))
-        .with_page_size(1000i32);
+        );
         let params = (cid.to_cql(), lang.to_cql(), version, gid.to_cql());
         let rows = db.execute_iter(query, params).await?;
 

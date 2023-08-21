@@ -1,9 +1,9 @@
 use futures::{stream::StreamExt, Stream};
 use scylla::{
     frame::value::{BatchValues, ValueList},
-    statement::{prepared_statement::PreparedStatement, Consistency, SerialConsistency},
+    statement::{Consistency, SerialConsistency},
     transport::{query_result::QueryResult, Compression, ExecutionProfile},
-    Metrics, Session, SessionBuilder,
+    CachingSession, Metrics, Session, SessionBuilder,
 };
 use std::{sync::Arc, time::Duration};
 
@@ -17,7 +17,7 @@ pub use scylla::{
 use crate::conf;
 
 pub struct ScyllaDB {
-    session: Session,
+    session: CachingSession,
 }
 
 impl ScyllaDB {
@@ -43,30 +43,13 @@ impl ScyllaDB {
             session.use_keyspace(keyspace, false).await?;
         }
 
-        Ok(Self { session })
+        Ok(Self {
+            session: CachingSession::from(session, 10000),
+        })
     }
 
     pub fn metrics(&self) -> Arc<Metrics> {
-        self.session.get_metrics()
-    }
-
-    #[cfg(test)]
-    pub async fn init_tables_for_test(&self) -> anyhow::Result<()> {
-        let schema = std::include_str!("../../cql/schema_keyspace_test.cql");
-        exec_cqls(self, schema).await?;
-
-        let schema = std::include_str!("../../cql/schema_table.cql");
-        exec_cqls(self, schema).await?;
-        Ok(())
-    }
-
-    pub async fn query(
-        &self,
-        query: impl Into<Query>,
-        params: impl ValueList,
-    ) -> anyhow::Result<QueryResult> {
-        let res = self.session.query(query, params).await?;
-        Ok(res)
+        self.session.get_session().get_metrics()
     }
 
     pub async fn execute(
@@ -74,10 +57,7 @@ impl ScyllaDB {
         query: impl Into<Query>,
         params: impl ValueList,
     ) -> anyhow::Result<QueryResult> {
-        let mut prepared: PreparedStatement = self.session.prepare(query).await?;
-
-        prepared.set_consistency(Consistency::Quorum);
-        let res = self.session.execute(&prepared, params).await?;
+        let res = self.session.execute(query, params).await?;
         Ok(res)
     }
 
@@ -86,10 +66,7 @@ impl ScyllaDB {
         query: impl Into<Query>,
         params: impl ValueList,
     ) -> anyhow::Result<Vec<Row>> {
-        let mut prepared: PreparedStatement = self.session.prepare(query).await?;
-
-        prepared.set_consistency(Consistency::Quorum);
-        let mut rows_stream = self.session.execute_iter(prepared, params).await?;
+        let mut rows_stream = self.session.execute_iter(query, params).await?;
 
         let (capacity, _) = rows_stream.size_hint();
         let mut rows: Vec<Row> = Vec::with_capacity(capacity);
@@ -99,23 +76,9 @@ impl ScyllaDB {
         Ok(rows)
     }
 
-    pub async fn execute_paged(
-        &self,
-        query: impl Into<Query>,
-        params: impl ValueList,
-        paging_state: Option<Bytes>,
-    ) -> anyhow::Result<Vec<Row>> {
-        let mut prepared: PreparedStatement = self.session.prepare(query).await?;
-
-        prepared.set_consistency(Consistency::Quorum);
-        let res = self
-            .session
-            .execute_paged(&prepared, params, paging_state)
-            .await?;
-
-        Ok(res.rows.unwrap_or_default())
-    }
-
+    // https://opensource.docs.scylladb.com/master/cql/dml.html#batch-statement
+    // BATCH operations are only isolated within a single partition.
+    // BATCH with conditions cannot span multiple tables
     pub async fn batch(
         &self,
         statements: Vec<&str>,
@@ -125,9 +88,7 @@ impl ScyllaDB {
         for statement in statements {
             batch.append_statement(statement);
         }
-        let mut prepared_batch: Batch = self.session.prepare_batch(&batch).await?;
-        prepared_batch.set_consistency(Consistency::Quorum);
-        let res = self.session.batch(&prepared_batch, values).await?;
+        let res = self.session.batch(&batch, values).await?;
         Ok(res)
     }
 }
@@ -159,7 +120,7 @@ pub async fn exec_cqls(db: &ScyllaDB, cqls: &str) -> anyhow::Result<()> {
 
     for cql in cqls {
         let res = db
-            .query(cql.clone(), &[])
+            .execute(cql.clone(), &[])
             .await
             .map_err(|err| anyhow::anyhow!("\ncql: {}\nerror: {}", &cql, &err));
         if res.is_err() {
@@ -177,6 +138,7 @@ pub async fn exec_cqls(db: &ScyllaDB, cqls: &str) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::conf;
     use crate::db;
     use tokio::sync::OnceCell;
@@ -195,6 +157,11 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn exec_cqls_works() {
         let db = get_db().await;
-        db.init_tables_for_test().await.unwrap();
+
+        let schema = std::include_str!("../../cql/schema_keyspace_test.cql");
+        exec_cqls(db, schema).await.unwrap();
+
+        let schema = std::include_str!("../../cql/schema_table.cql");
+        exec_cqls(db, schema).await.unwrap();
     }
 }
