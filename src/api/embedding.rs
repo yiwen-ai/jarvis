@@ -455,7 +455,7 @@ pub async fn public(
                     rid = rid,
                     gid = gid.to_string(),
                     cid = cid.to_string(),
-                    language = language.to_string(),
+                    language = language.to_639_3().to_string(),
                     elapsed = start.elapsed().as_millis() as u64;
                     "success",
                 )
@@ -466,7 +466,7 @@ pub async fn public(
                     rid = rid,
                     gid = gid.to_string(),
                     cid = cid.to_string(),
-                    language = language.to_string(),
+                    language = language.to_639_3().to_string(),
                     elapsed = start.elapsed().as_millis() as u64;
                     "{}", err,
                 )

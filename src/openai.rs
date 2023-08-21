@@ -167,6 +167,7 @@ impl OpenAI {
                         rid = rid,
                         user = user,
                         fixed = content.is_ok(),
+                        input = text,
                         output = output;
                         "",
                     );
@@ -177,6 +178,7 @@ impl OpenAI {
                         rid = rid,
                         user = user,
                         fixed = false,
+                        input = text,
                         output = choice.message.content;
                         "{}", &er,
                     );
@@ -214,6 +216,7 @@ impl OpenAI {
                 elapsed = start.elapsed().as_millis() as u64,
                 rid = rid,
                 user = user,
+                input = text,
                 output = choice.message.content;
                 "{}", err,
             );

@@ -2,9 +2,9 @@ use qdrant_client::client::{QdrantClient, QdrantClientConfig};
 use tokio::time::Duration;
 
 pub use qdrant_client::qdrant::{
-    r#match::MatchValue, Condition, FieldCondition, Filter, Match, PointId, PointStruct,
-    ReadConsistency, SearchPoints, SearchResponse, Value, Vectors, WithPayloadSelector,
-    WithVectorsSelector,
+    r#match::MatchValue, read_consistency, Condition, FieldCondition, Filter, Match, PointId,
+    PointStruct, ReadConsistency, SearchPoints, SearchResponse, Value, Vectors,
+    WithPayloadSelector, WithVectorsSelector,
 };
 
 use crate::conf;
@@ -64,7 +64,9 @@ impl Qdrant {
                 &ids,
                 Some(WithVectorsSelector::from(true)),
                 Some(WithPayloadSelector::from(true)),
-                Some(ReadConsistency::default()),
+                Some(ReadConsistency {
+                    value: Some(read_consistency::Value::Type(1)),
+                }),
             )
             .await?;
 

@@ -74,6 +74,8 @@ pub async fn get(
     })))
 }
 
+const IGNORE_LANGGUAGES: [&'static str; 5] = ["abk", "ava", "bak", "lim", "nya"];
+
 pub async fn list_languages(
     to: PackObject<()>,
     State(_): State<Arc<AppState>>,
@@ -85,11 +87,13 @@ pub async fn list_languages(
             continue;
         }
 
-        list.push((
-            lg.to_639_3().to_string(),
-            lg.to_name().to_string(),
-            lg.to_autonym().unwrap().to_string(),
-        ));
+        if !IGNORE_LANGGUAGES.contains(&lg.to_639_3()) {
+            list.push((
+                lg.to_639_3().to_string(),
+                lg.to_name().to_string(),
+                lg.to_autonym().unwrap().to_string(),
+            ));
+        }
     }
     Ok(to.with(SuccessResponse {
         total_size: Some(list.len() as u64),
@@ -263,7 +267,7 @@ async fn translate(
                     rid = &rid,
                     gid = gid.to_string(),
                     cid = cid.to_string(),
-                    language = language.to_string(),
+                    language = target_lang.to_639_3().to_string(),
                     version = version,
                     elapsed = ai_elapsed;
                     "{}", err.to_string(),
@@ -276,7 +280,7 @@ async fn translate(
                     rid = &rid,
                     gid = gid.to_string(),
                     cid = cid.to_string(),
-                    language = language.to_string(),
+                    language = target_lang.to_639_3().to_string(),
                     version = version,
                     elapsed = ai_elapsed;
                     "success",
@@ -298,7 +302,7 @@ async fn translate(
             rid = &rid,
             gid = gid.to_string(),
             cid = cid.to_string(),
-            language = language.to_string(),
+            language = target_lang.to_639_3().to_string(),
             version = version,
             elapsed = start.elapsed().as_millis() as u64,
             pieces = pieces;
@@ -319,7 +323,7 @@ async fn translate(
                 rid = &rid,
                 gid = gid.to_string(),
                 cid = cid.to_string(),
-                language = language.to_string(),
+                language = target_lang.to_639_3().to_string(),
                 version = version,
                 elapsed = start.elapsed().as_millis() as u64,
                 pieces = pieces;
@@ -332,7 +336,7 @@ async fn translate(
                 rid = &rid,
                 gid = gid.to_string(),
                 cid = cid.to_string(),
-                language = language.to_string(),
+                language = target_lang.to_639_3().to_string(),
                 version = version,
                 elapsed = start.elapsed().as_millis() as u64,
                 pieces = pieces;
