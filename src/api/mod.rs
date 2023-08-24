@@ -20,8 +20,9 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 static SECTION_SEPARATOR: &str = "------";
 
 // gpt-35-16k, 16384
-static TRANSLATE_SECTION_TOKENS: usize = 6000;
-static TRANSLATE_HIGH_TOKENS: usize = 7000;
+// gpt-35-turbo, 4096
+static TRANSLATE_SECTION_TOKENS: usize = 1600;
+static TRANSLATE_HIGH_TOKENS: usize = 1800;
 
 // gpt-35-turbo, 4096
 static SUMMARIZE_SECTION_TOKENS: usize = 2800;
