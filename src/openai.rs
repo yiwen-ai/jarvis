@@ -14,7 +14,7 @@ use crate::conf::AzureAI;
 use crate::json_util::RawJSONArray;
 use axum_web::erring::HTTPError;
 
-const COMPRESS_MIN_LENGTH: usize = 512;
+const COMPRESS_MIN_LENGTH: usize = 256;
 
 static APP_USER_AGENT: &str = concat!(
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36 ",
@@ -49,7 +49,7 @@ impl OpenAI {
             .http2_keep_alive_timeout(Duration::from_secs(15))
             .http2_keep_alive_while_idle(true)
             .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(100))
+            .timeout(Duration::from_secs(300))
             .user_agent(APP_USER_AGENT)
             .gzip(true);
 
