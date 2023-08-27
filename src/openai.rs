@@ -402,13 +402,8 @@ impl OpenAI {
             format!("{} and {} languages", origin_lang, target_lang)
         };
 
-        let mut max_tokens = 9000u16;
-        if text.len() < 6000usize {
-            max_tokens = (text.len() + text.len() / 2) as u16;
-        }
-
         let mut req_body = CreateChatCompletionRequestArgs::default()
-        .max_tokens(max_tokens)
+        .max_tokens(2000u16)
         .temperature(0f32)
         .messages([
             ChatCompletionRequestMessageArgs::default()
