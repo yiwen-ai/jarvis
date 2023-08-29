@@ -99,7 +99,7 @@ impl OpenAI {
         let mut openai_headers = header::HeaderMap::with_capacity(3);
         openai_headers.insert(
             header::AUTHORIZATION,
-            format!("Bearer {}", opts.openai.org_id).parse().unwrap(),
+            format!("Bearer {}", opts.openai.api_key).parse().unwrap(),
         );
         openai_headers.insert("OpenAI-Organization", opts.openai.org_id.parse().unwrap());
 
