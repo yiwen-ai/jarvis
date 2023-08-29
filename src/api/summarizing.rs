@@ -8,11 +8,11 @@ use axum_web::erring::{HTTPError, SuccessResponse};
 use axum_web::object::{cbor_from_slice, PackObject};
 use scylla_orm::ColumnsMap;
 
+use crate::api::{AppState, TEContentList, TEOutput, TEParams, TESegmenter};
 use crate::db;
 use crate::lang::Language;
+use crate::openai;
 use crate::tokenizer;
-
-use crate::api::{AppState, TEContentList, TEOutput, TESegmenter};
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct SummarizingInput {
@@ -106,23 +106,17 @@ pub async fn create(
             data: None,
         })?;
 
-    let content = content.segment_for_summarizing(tokenizer::tokens_len);
-    if content.is_empty() {
-        return Err(HTTPError::new(
-            400,
-            "Empty content to summarize".to_string(),
-        ));
-    }
-
     tokio::spawn(summarize(
         app,
-        ctx.rid.clone(),
-        ctx.user.to_string(),
-        gid,
-        cid,
-        input.version as i16,
-        language,
-        content,
+        TEParams {
+            rid: ctx.rid.clone(),
+            user: ctx.user.to_string(),
+            gid,
+            cid,
+            version: input.version as i16,
+            language,
+            content,
+        },
     ));
 
     Ok(to.with(SuccessResponse::new(TEOutput {
@@ -131,23 +125,19 @@ pub async fn create(
     })))
 }
 
-async fn summarize(
-    app: Arc<AppState>,
-    rid: String,
-    user: String,
-    gid: xid::Id,
-    cid: xid::Id,
-    version: i16,
-    language: Language,
-    input: Vec<String>,
-) {
-    let pieces = input.len();
+async fn summarize(app: Arc<AppState>, te: TEParams) {
+    let content = te.content.segment_for_summarizing(tokenizer::tokens_len);
+    if content.is_empty() {
+        return;
+    }
+
+    let pieces = content.len();
     let start = Instant::now();
     let tokio_translating = app.translating.clone();
     let mut used_tokens: usize = 0;
 
     let mut output = String::new();
-    for c in input {
+    for c in content {
         let unit_elapsed = start.elapsed().as_millis() as u64;
         let text = if output.is_empty() {
             c.to_owned()
@@ -157,23 +147,23 @@ async fn summarize(
 
         let res = app
             .ai
-            .summarize(&rid, &user, language.to_name(), &text)
+            .summarize(&te.rid, &te.user, te.language.to_name(), &text)
             .await;
         let ai_elapsed = start.elapsed().as_millis() as u64 - unit_elapsed;
         match res {
             Err(err) => {
-                let mut doc = db::Summarizing::with_pk(gid, cid, language, version);
+                let mut doc = db::Summarizing::with_pk(te.gid, te.cid, te.language, te.version);
                 let mut cols = ColumnsMap::with_capacity(1);
                 cols.set_as("error", &err.to_string());
                 let _ = doc.upsert_fields(&app.scylla, cols).await;
 
                 log::error!(target: "summarizing",
                     action = "call_openai",
-                    rid = &rid,
-                    gid = gid.to_string(),
-                    cid = cid.to_string(),
-                    language = language.to_639_3().to_string(),
-                    version = version,
+                    rid = te.rid,
+                    gid = te.gid.to_string(),
+                    cid = te.cid.to_string(),
+                    language = te.language.to_639_3().to_string(),
+                    version = te.version,
                     elapsed = ai_elapsed;
                     "{}", err.to_string(),
                 );
@@ -182,11 +172,11 @@ async fn summarize(
             Ok(_) => {
                 log::info!(target: "summarizing",
                     action = "call_openai",
-                    rid = &rid,
-                    gid = gid.to_string(),
-                    cid = cid.to_string(),
-                    language = language.to_639_3().to_string(),
-                    version = version,
+                    rid = te.rid,
+                    gid = te.gid.to_string(),
+                    cid = te.cid.to_string(),
+                    language = te.language.to_639_3().to_string(),
+                    version = te.version,
                     elapsed = ai_elapsed;
                     "success",
                 );
@@ -198,9 +188,9 @@ async fn summarize(
     }
 
     // save target lang doc to db
-    let mut doc = db::Summarizing::with_pk(gid, cid, language, version);
+    let mut doc = db::Summarizing::with_pk(te.gid, te.cid, te.language, te.version);
     let mut cols = ColumnsMap::with_capacity(4);
-    cols.set_as("model", &"gpt3.5".to_string());
+    cols.set_as("model", &openai::AIModel::GPT3_5.to_string());
     cols.set_as("tokens", &(used_tokens as i32));
     cols.set_as("summary", &output);
     cols.set_as("error", &"".to_string());
@@ -209,11 +199,11 @@ async fn summarize(
         Err(err) => {
             log::error!(target: "summarizing",
                 action = "to_scylla",
-                rid = &rid,
-                gid = gid.to_string(),
-                cid = cid.to_string(),
-                language = language.to_639_3().to_string(),
-                version = version,
+                rid = te.rid,
+                gid = te.gid.to_string(),
+                cid = te.cid.to_string(),
+                language = te.language.to_639_3().to_string(),
+                version = te.version,
                 elapsed = start.elapsed().as_millis() as u64,
                 summary = doc.summary.len(),
                 pieces = pieces;
@@ -223,11 +213,11 @@ async fn summarize(
         Ok(_) => {
             log::info!(target: "summarizing",
                 action = "finish",
-                rid = &rid,
-                gid = gid.to_string(),
-                cid = cid.to_string(),
-                language = language.to_639_3().to_string(),
-                version = version,
+                rid = te.rid,
+                gid = te.gid.to_string(),
+                cid = te.cid.to_string(),
+                language = te.language.to_639_3().to_string(),
+                version = te.version,
                 elapsed = start.elapsed().as_millis() as u64,
                 summary = doc.summary.len(),
                 pieces = pieces;

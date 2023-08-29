@@ -30,13 +30,20 @@ pub struct Qdrant {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct AzureAI {
+    pub disable: bool,
     pub resource_name: String,
     pub api_key: String,
     pub api_version: String,
     pub embedding_model: String,
     pub summarize_model: String,
     pub translate_model: String,
-    pub agent: Agent,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct OpenAI {
+    pub disable: bool,
+    pub api_key: String,
+    pub org_id: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -47,13 +54,20 @@ pub struct Agent {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct AI {
+    pub agent: Agent,
+    pub openai: OpenAI,
+    pub azureai: AzureAI,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Conf {
     pub env: String,
     pub log: Log,
     pub server: Server,
     pub scylla: ScyllaDB,
     pub qdrant: Qdrant,
-    pub azureai: AzureAI,
+    pub ai: AI,
 }
 
 impl Conf {

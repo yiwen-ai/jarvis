@@ -61,7 +61,7 @@ pub async fn new(cfg: conf::Conf) -> anyhow::Result<(Arc<api::AppState>, Router)
 
 async fn new_app_state(cfg: conf::Conf) -> anyhow::Result<api::AppState> {
     let ld = lang::LanguageDetector::new();
-    let ai = openai::OpenAI::new(cfg.azureai);
+    let ai = openai::OpenAI::new(cfg.ai);
 
     let keyspace = if cfg.env == "test" {
         "jarvis_test"

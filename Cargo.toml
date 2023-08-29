@@ -1,6 +1,6 @@
 [package]
 name = "jarvis"
-version = "0.7.15"
+version = "0.8.0"
 edition = "2021"
 rust-version = "1.64"
 description = ""
@@ -40,9 +40,9 @@ log = "0.4"
 mime = "0.3"
 scylla = "0.9"
 serde = "1"
-serde_json = { version = "1.0", features = ["preserve_order"] }
-structured-logger = "1.0"
-tokio = { version = "1.32", features = [
+serde_json = { version = "1", features = ["preserve_order"] }
+structured-logger = "1"
+tokio = { version = "1", features = [
   "fs",
   "io-util",
   "io-std",
@@ -107,9 +107,11 @@ reqwest = { version = "0.11", features = [
   "trust-dns",
 ], default-features = false }
 tiktoken-rs = "0.5"
-async-openai = "0.12"
+async-openai = "0.14"
 futures = "0.3"
 sha3 = "0.10"
+strum = "0.25"
+strum_macros = "0.25"
 
 [profile.release]
 lto = true

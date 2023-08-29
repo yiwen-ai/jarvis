@@ -4,7 +4,7 @@ use axum_web::erring::HTTPError;
 use scylla_orm::{ColumnsMap, CqlValue, ToCqlVal};
 use scylla_orm_macros::CqlOrm;
 
-use crate::db::{scylladb};
+use crate::db::scylladb;
 
 #[derive(Debug, Default, Clone, CqlOrm)]
 pub struct Summarizing {

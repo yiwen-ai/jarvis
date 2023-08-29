@@ -1,6 +1,6 @@
 use axum::{extract::State, Extension};
 use serde::{Deserialize, Serialize};
-use std::{sync::Arc, time::Instant};
+use std::{str::FromStr, sync::Arc, time::Instant};
 use validator::Validate;
 
 use axum_web::context::ReqContext;
@@ -8,11 +8,11 @@ use axum_web::erring::{HTTPError, SuccessResponse};
 use axum_web::object::{cbor_from_slice, cbor_to_vec, PackObject};
 use scylla_orm::ColumnsMap;
 
+use crate::api::{AppState, TEContentList, TEOutput, TEParams, TESegmenter};
 use crate::db;
 use crate::lang::Language;
+use crate::openai;
 use crate::tokenizer;
-
-use crate::api::{AppState, TEContentList, TEOutput, TESegmenter, TEUnit};
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct TranslatingInput {
@@ -167,6 +167,10 @@ pub async fn create(
     let gid = *input.gid;
     let cid = *input.cid;
     let target_language = *input.language;
+    let model = match input.model {
+        Some(model) => openai::AIModel::from_str(&model.to_lowercase())?,
+        None => openai::AIModel::GPT3_5,
+    };
 
     ctx.set_kvs(vec![
         ("action", "create_translating".into()),
@@ -174,6 +178,7 @@ pub async fn create(
         ("cid", cid.to_string().into()),
         ("language", target_language.to_639_3().to_string().into()),
         ("version", input.version.into()),
+        ("model", model.to_string().into()),
     ])
     .await;
 
@@ -207,14 +212,17 @@ pub async fn create(
 
     tokio::spawn(translate(
         app,
-        ctx.rid.clone(),
-        ctx.user.to_string(),
-        gid,
-        cid,
-        input.version as i16,
+        TEParams {
+            rid: ctx.rid.clone(),
+            user: ctx.user.to_string(),
+            gid,
+            cid,
+            version: input.version as i16,
+            language: target_language,
+            content,
+        },
         detected_language,
-        target_language,
-        content.segment(tokenizer::tokens_len),
+        model,
     ));
 
     Ok(to.with(SuccessResponse::new(TEOutput {
@@ -225,50 +233,46 @@ pub async fn create(
 
 async fn translate(
     app: Arc<AppState>,
-    rid: String,
-    user: String,
-    gid: xid::Id,
-    cid: xid::Id,
-    version: i16,
-    detected_language: Language,
-    target_lang: Language,
-    input: Vec<TEUnit>,
+    te: TEParams,
+    origin_language: Language,
+    model: openai::AIModel,
 ) {
-    let pieces = input.len();
+    let content = te.content.segment(&model, tokenizer::tokens_len);
+    let pieces = content.len();
     let start = Instant::now();
     let tokio_translating = app.translating.clone();
     let mut content_list: TEContentList = Vec::new();
     let mut used_tokens: usize = 0;
-    let origin_language = detected_language.to_name();
-    let language = target_lang.to_name();
+    let mut doc = db::Translating::with_pk(te.gid, te.cid, te.language, te.version);
 
-    for unit in input {
+    for unit in content {
         let unit_elapsed = start.elapsed().as_millis() as u64;
         let res = app
             .ai
             .translate(
-                &rid,
-                &user,
-                origin_language,
-                language,
+                &te.rid,
+                &te.user,
+                &model,
+                origin_language.to_name(),
+                te.language.to_name(),
                 &unit.to_translating_list(),
             )
             .await;
+
         let ai_elapsed = start.elapsed().as_millis() as u64 - unit_elapsed;
         match res {
             Err(err) => {
-                let mut doc = db::Translating::with_pk(gid, cid, target_lang, version);
                 let mut cols = ColumnsMap::with_capacity(1);
                 cols.set_as("error", &err.to_string());
                 let _ = doc.upsert_fields(&app.scylla, cols).await;
 
                 log::error!(target: "translating",
                     action = "call_openai",
-                    rid = &rid,
-                    gid = gid.to_string(),
-                    cid = cid.to_string(),
-                    language = target_lang.to_639_3().to_string(),
-                    version = version,
+                    rid = te.rid,
+                    gid = te.gid.to_string(),
+                    cid = te.cid.to_string(),
+                    language = te.language.to_639_3().to_string(),
+                    version = te.version,
                     elapsed = ai_elapsed;
                     "{}", err.to_string(),
                 );
@@ -277,11 +281,11 @@ async fn translate(
             Ok(_) => {
                 log::info!(target: "translating",
                     action = "call_openai",
-                    rid = &rid,
-                    gid = gid.to_string(),
-                    cid = cid.to_string(),
-                    language = target_lang.to_639_3().to_string(),
-                    version = version,
+                    rid = te.rid,
+                    gid = te.gid.to_string(),
+                    cid = te.cid.to_string(),
+                    language = te.language.to_639_3().to_string(),
+                    version = te.version,
                     elapsed = ai_elapsed;
                     "success",
                 );
@@ -294,16 +298,15 @@ async fn translate(
     }
 
     // save target lang doc to db
-    let mut doc = db::Translating::with_pk(gid, cid, target_lang, version);
     let content = cbor_to_vec(&content_list);
     if content.is_err() {
         log::warn!(target: "translating",
             action = "to_cbor",
-            rid = &rid,
-            gid = gid.to_string(),
-            cid = cid.to_string(),
-            language = target_lang.to_639_3().to_string(),
-            version = version,
+            rid = te.rid,
+            gid = te.gid.to_string(),
+            cid = te.cid.to_string(),
+            language = te.language.to_639_3().to_string(),
+            version = te.version,
             elapsed = start.elapsed().as_millis() as u64,
             pieces = pieces;
             "{}", content.unwrap_err().to_string(),
@@ -311,7 +314,7 @@ async fn translate(
         return;
     }
     let mut cols = ColumnsMap::with_capacity(4);
-    cols.set_as("model", &"gpt3.5".to_string());
+    cols.set_as("model", &model.to_string());
     cols.set_as("tokens", &(used_tokens as i32));
     cols.set_as("content", &content.unwrap());
     cols.set_as("error", &"".to_string());
@@ -320,11 +323,11 @@ async fn translate(
         Err(err) => {
             log::error!(target: "translating",
                 action = "to_scylla",
-                rid = &rid,
-                gid = gid.to_string(),
-                cid = cid.to_string(),
-                language = target_lang.to_639_3().to_string(),
-                version = version,
+                rid = te.rid,
+                gid = te.gid.to_string(),
+                cid = te.cid.to_string(),
+                language = te.language.to_639_3().to_string(),
+                version = te.version,
                 elapsed = start.elapsed().as_millis() as u64,
                 pieces = pieces;
                 "{}", err,
@@ -333,11 +336,11 @@ async fn translate(
         Ok(_) => {
             log::info!(target: "translating",
                 action = "finish",
-                rid = &rid,
-                gid = gid.to_string(),
-                cid = cid.to_string(),
-                language = target_lang.to_639_3().to_string(),
-                version = version,
+                rid = te.rid,
+                gid = te.gid.to_string(),
+                cid = te.cid.to_string(),
+                language = te.language.to_639_3().to_string(),
+                version = te.version,
                 elapsed = start.elapsed().as_millis() as u64,
                 pieces = pieces;
                 "success",

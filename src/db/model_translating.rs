@@ -93,31 +93,6 @@ impl Translating {
         Ok(())
     }
 
-    // pub async fn save(&mut self, db: &scylladb::ScyllaDB) -> anyhow::Result<bool> {
-    //     let fields = Self::fields();
-    //     self._fields = fields.clone();
-
-    //     let mut cols_name: Vec<&str> = Vec::with_capacity(fields.len());
-    //     let mut vals_name: Vec<&str> = Vec::with_capacity(fields.len());
-    //     let mut params: Vec<&CqlValue> = Vec::with_capacity(fields.len());
-    //     let cols = self.to();
-
-    //     for field in &fields {
-    //         cols_name.push(field);
-    //         vals_name.push("?");
-    //         params.push(cols.get(field).unwrap());
-    //     }
-
-    //     let query = format!(
-    //         "INSERT INTO translating ({}) VALUES ({})",
-    //         cols_name.join(","),
-    //         vals_name.join(",")
-    //     );
-
-    //     let _ = db.execute(query, params).await?;
-    //     Ok(true)
-    // }
-
     pub async fn upsert_fields(
         &mut self,
         db: &scylladb::ScyllaDB,
@@ -156,6 +131,7 @@ mod tests {
 
     use crate::conf;
     use crate::db::USER_JARVIS;
+    use crate::openai;
 
     use super::*;
 
@@ -183,7 +159,7 @@ mod tests {
         let content: Vec<u8> = vec![0x80];
 
         let mut cols = ColumnsMap::with_capacity(4);
-        cols.set_as("model", &"gpt3.5".to_string());
+        cols.set_as("model", &openai::AIModel::GPT3_5.to_string());
         cols.set_as("tokens", &(1000i32));
         cols.set_as("content", &content);
 

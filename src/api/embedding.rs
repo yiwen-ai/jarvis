@@ -9,11 +9,10 @@ use axum_web::context::ReqContext;
 use axum_web::erring::{HTTPError, SuccessResponse};
 use axum_web::object::{cbor_from_slice, PackObject};
 
+use crate::api::{AppState, TEContentList, TEOutput, TEParams, TESegmenter};
 use crate::db::{self, qdrant};
 use crate::lang::Language;
 use crate::tokenizer;
-
-use crate::api::{AppState, TEContentList, TEOutput, TESegmenter, TEUnit};
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct SearchInput {
@@ -234,16 +233,17 @@ pub async fn create(
     })?;
 
     // start embedding in the background immediately.
-    let embedding_input = content.segment_for_embedding(tokenizer::tokens_len);
     tokio::spawn(embedding(
         app,
-        ctx.rid.clone(),
-        ctx.user.to_string(),
-        gid,
-        cid,
-        input.version as i16,
-        language,
-        embedding_input,
+        TEParams {
+            rid: ctx.rid.clone(),
+            user: ctx.user.to_string(),
+            gid,
+            cid,
+            language,
+            version: input.version as i16,
+            content,
+        },
     ));
 
     Ok(to.with(SuccessResponse::new(TEOutput {
@@ -252,38 +252,34 @@ pub async fn create(
     })))
 }
 
-async fn embedding(
-    app: Arc<AppState>,
-    rid: String,
-    user: String,
-    gid: xid::Id,
-    cid: xid::Id,
-    version: i16,
-    lang: Language,
-    input: Vec<Vec<TEUnit>>,
-) {
-    let pieces = input.len();
+async fn embedding(app: Arc<AppState>, te: TEParams) {
+    let content = te.content.segment_for_embedding(tokenizer::tokens_len);
+    if content.is_empty() {
+        return;
+    }
+
+    let pieces = content.len();
     let start = Instant::now();
     let tokio_embedding = app.embedding.clone();
     let mut total_tokens: i32 = 0;
 
-    for unit_group in input {
+    for unit_group in content {
         let unit_elapsed = start.elapsed().as_millis() as u64;
         let embedding_input: Vec<String> = unit_group
             .iter()
             .map(|unit| unit.to_embedding_string())
             .collect();
-        let res = app.ai.embedding(&rid, &user, &embedding_input).await;
+        let res = app.ai.embedding(&te.rid, &te.user, &embedding_input).await;
 
         let ai_elapsed = start.elapsed().as_millis() as u64 - unit_elapsed;
         match res {
             Err(err) => {
                 log::error!(target: "embedding",
                     action = "call_openai",
-                    rid = &rid,
-                    gid = gid.to_string(),
-                    cid = cid.to_string(),
-                    language = lang.to_string(),
+                    rid = te.rid,
+                    gid = te.gid.to_string(),
+                    cid = te.cid.to_string(),
+                    language = te.language.to_string(),
                     elapsed = ai_elapsed;
                     "{}", err.to_string(),
                 );
@@ -292,10 +288,10 @@ async fn embedding(
             Ok(_) => {
                 log::info!(target: "embedding",
                     action = "call_openai",
-                    rid = &rid,
-                    gid = gid.to_string(),
-                    cid = cid.to_string(),
-                    language = lang.to_string(),
+                    rid = te.rid,
+                    gid = te.gid.to_string(),
+                    cid = te.cid.to_string(),
+                    language = te.language.to_string(),
                     elapsed = ai_elapsed;
                     "success",
                 );
@@ -305,17 +301,17 @@ async fn embedding(
         let (used_tokens, embeddings) = res.unwrap();
         total_tokens += used_tokens as i32;
         for (i, unit) in unit_group.iter().enumerate() {
-            let mut doc = db::Embedding::from(cid, lang, unit.ids().join(","));
-            doc.gid = gid;
-            doc.version = version;
+            let mut doc = db::Embedding::from(te.cid, te.language, unit.ids().join(","));
+            doc.gid = te.gid;
+            doc.version = te.version;
 
             if let Err(err) = ciborium::into_writer(&unit.content, &mut doc.content) {
                 log::warn!(target: "embedding",
                     action = "to_cbor",
-                    rid = rid,
-                    gid = gid.to_string(),
-                    cid = cid.to_string(),
-                    language = lang.to_string(),
+                    rid = te.rid,
+                    gid = te.gid.to_string(),
+                    cid = te.cid.to_string(),
+                    language = te.language.to_string(),
                     elapsed = ai_elapsed;
                     "{}", err,
                 );
@@ -328,10 +324,10 @@ async fn embedding(
                 Err(err) => {
                     log::error!(target: "embedding",
                         action = "to_scylla",
-                        rid = &rid,
-                        gid = gid.to_string(),
-                        cid = cid.to_string(),
-                        language = lang.to_string(),
+                        rid = te.rid,
+                        gid = te.gid.to_string(),
+                        cid = te.cid.to_string(),
+                        language = te.language.to_string(),
                         used_tokens = used_tokens,
                         ids = log::as_serde!(unit.ids()),
                         ai_elapsed = ai_elapsed,
@@ -342,10 +338,10 @@ async fn embedding(
                 Ok(_) => {
                     log::info!(target: "embedding",
                         action = "to_scylla",
-                        rid = &rid,
-                        gid = gid.to_string(),
-                        cid = cid.to_string(),
-                        language = lang.to_string(),
+                        rid = te.rid,
+                        gid = te.gid.to_string(),
+                        cid = te.cid.to_string(),
+                        language = te.language.to_string(),
                         used_tokens = used_tokens,
                         ids = log::as_serde!(unit.ids()),
                         ai_elapsed = ai_elapsed,
@@ -358,10 +354,10 @@ async fn embedding(
                         Ok(()) => {
                             log::info!(target: "qdrant",
                                 action = "to_qdrant",
-                                rid = rid,
-                                gid = gid.to_string(),
-                                cid = cid.to_string(),
-                                language = lang.to_string(),
+                                rid = te.rid,
+                                gid = te.gid.to_string(),
+                                cid = te.cid.to_string(),
+                                language = te.language.to_string(),
                                 ai_elapsed = ai_elapsed,
                                 scylla_elapsed = scylla_elapsed,
                                 elapsed = start.elapsed().as_millis() as u64 - scylla_elapsed - ai_elapsed - unit_elapsed;
@@ -371,10 +367,10 @@ async fn embedding(
                         Err(err) => {
                             log::error!(target: "qdrant",
                                 action = "to_qdrant",
-                                rid = rid,
-                                gid = gid.to_string(),
-                                cid = cid.to_string(),
-                                language = lang.to_string(),
+                                rid = te.rid,
+                                gid = te.gid.to_string(),
+                                cid = te.cid.to_string(),
+                                language = te.language.to_string(),
                                 ai_elapsed = ai_elapsed,
                                 scylla_elapsed = scylla_elapsed,
                                 elapsed = start.elapsed().as_millis() as u64- scylla_elapsed- ai_elapsed - unit_elapsed;
@@ -389,10 +385,10 @@ async fn embedding(
 
     log::info!(target: "embedding",
         action = "finish",
-        rid = &rid,
-        gid = gid.to_string(),
-        cid = cid.to_string(),
-        language = lang.to_string(),
+        rid = te.rid,
+        gid = te.gid.to_string(),
+        cid = te.cid.to_string(),
+        language = te.language.to_string(),
         elapsed = start.elapsed().as_millis() as u64,
         pieces = pieces,
         used_tokens = total_tokens;

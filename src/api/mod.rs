@@ -1,9 +1,8 @@
 use axum::extract::State;
+use axum_web::object::PackObject;
 use isolang::Language;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-
-use axum_web::object::PackObject;
 
 use crate::db::{self, qdrant};
 use crate::lang::LanguageDetector;
@@ -18,11 +17,6 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // dashes (------) is a horizontal rule, work as a top section separator
 static SECTION_SEPARATOR: &str = "------";
-
-// gpt-35-16k, 16384
-// gpt-35-turbo, 4096
-static TRANSLATE_SECTION_TOKENS: usize = 1600;
-static TRANSLATE_HIGH_TOKENS: usize = 1800;
 
 // gpt-35-turbo, 4096
 static SUMMARIZE_SECTION_TOKENS: usize = 2800;
@@ -89,6 +83,16 @@ pub async fn healthz(to: PackObject<()>, State(app): State<Arc<AppState>>) -> Pa
         scylla_queries_iter_num: m.get_queries_iter_num(),
         scylla_retries_num: m.get_retries_num(),
     })
+}
+
+pub(crate) struct TEParams {
+    pub rid: String,
+    pub user: String,
+    pub gid: xid::Id,
+    pub cid: xid::Id,
+    pub language: Language,
+    pub version: i16,
+    pub content: TEContentList,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -180,7 +184,7 @@ impl TEUnit {
 
 pub trait TESegmenter {
     fn detect_lang_string(&self) -> String;
-    fn segment(&self, tokens_len: fn(&str) -> usize) -> Vec<TEUnit>;
+    fn segment(&self, model: &openai::AIModel, tokens_len: fn(&str) -> usize) -> Vec<TEUnit>;
     fn segment_for_summarizing(&self, tokens_len: fn(&str) -> usize) -> Vec<String>;
     fn segment_for_embedding(&self, tokens_len: fn(&str) -> usize) -> Vec<Vec<TEUnit>>;
 }
@@ -198,18 +202,19 @@ impl TESegmenter for TEContentList {
         detect_language
     }
 
-    fn segment(&self, tokens_len: fn(&str) -> usize) -> Vec<TEUnit> {
+    fn segment(&self, model: &openai::AIModel, tokens_len: fn(&str) -> usize) -> Vec<TEUnit> {
         let mut list: Vec<TEUnit> = Vec::new();
         let mut unit: TEUnit = TEUnit {
             tokens: 0,
             content: Vec::new(),
         };
+        let (st, ht) = model.translating_max_tokens();
 
         for c in self {
             if c.texts.is_empty() {
                 if c.id == SECTION_SEPARATOR {
                     // segment embedding content by section separator
-                    if unit.tokens >= TRANSLATE_SECTION_TOKENS {
+                    if unit.tokens >= st {
                         list.push(unit);
                         unit = TEUnit {
                             tokens: 0,
@@ -223,7 +228,7 @@ impl TESegmenter for TEContentList {
 
             let ctl = tokens_len(&c.to_translating_string());
 
-            if unit.tokens + ctl >= TRANSLATE_HIGH_TOKENS {
+            if unit.tokens + ctl >= ht {
                 unit.tokens += ctl;
                 unit.content.push(c.clone());
                 list.push(unit);
