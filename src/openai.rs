@@ -17,7 +17,7 @@ use axum_web::erring::HTTPError;
 const COMPRESS_MIN_LENGTH: usize = 256;
 
 static APP_USER_AGENT: &str = concat!(
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36 ",
+    "Mozilla/5.0 yiwen.ai ",
     env!("CARGO_PKG_NAME"),
     "/",
     env!("CARGO_PKG_VERSION"),
@@ -704,7 +704,10 @@ impl OpenAI {
         user: &str,
         input: &Vec<String>, // max length: 16
     ) -> Result<CreateEmbeddingResponse> {
-        let mut req_body = CreateEmbeddingRequestArgs::default().input(input).build()?;
+        let mut req_body = CreateEmbeddingRequestArgs::default()
+            .model("text-embedding-ada-002")
+            .input(input)
+            .build()?;
         if !user.is_empty() {
             req_body.user = Some(user.to_string())
         }

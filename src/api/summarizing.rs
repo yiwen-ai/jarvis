@@ -87,7 +87,7 @@ pub async fn create(
     let language = *input.language;
 
     ctx.set_kvs(vec![
-        ("action", "create_translating".into()),
+        ("action", "create_summarizing".into()),
         ("gid", gid.to_string().into()),
         ("cid", cid.to_string().into()),
         ("language", language.to_639_3().to_string().into()),
