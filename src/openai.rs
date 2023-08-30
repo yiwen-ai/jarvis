@@ -50,8 +50,8 @@ impl AIModel {
     // return (section_tokens, max_tokens)
     pub fn translating_max_tokens(&self) -> (usize, usize) {
         match self {
-            AIModel::GPT3_5 => (1600, 1800),
-            AIModel::GPT4 => (3600, 3800),
+            AIModel::GPT3_5 => (1200, 1800),
+            AIModel::GPT4 => (2400, 3600),
         }
     }
 }

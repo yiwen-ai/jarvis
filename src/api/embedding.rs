@@ -391,7 +391,7 @@ async fn embedding(app: Arc<AppState>, te: TEParams) {
         language = te.language.to_string(),
         elapsed = start.elapsed().as_millis() as u64,
         pieces = pieces,
-        used_tokens = total_tokens;
+        total_tokens = total_tokens;
         "success",
     );
 

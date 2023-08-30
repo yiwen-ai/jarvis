@@ -19,8 +19,8 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 static SECTION_SEPARATOR: &str = "------";
 
 // gpt-35-turbo, 4096
-static SUMMARIZE_SECTION_TOKENS: usize = 2800;
-static SUMMARIZE_HIGH_TOKENS: usize = 3200;
+static SUMMARIZE_SECTION_TOKENS: usize = 2400;
+static SUMMARIZE_HIGH_TOKENS: usize = 3000;
 
 // text-embedding-ada-002, 8191
 // https://community.openai.com/t/embedding-text-length-vs-accuracy/96564

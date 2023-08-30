@@ -258,7 +258,7 @@ async fn translate(
     let start = Instant::now();
     let tokio_translating = app.translating.clone();
     let mut content_list: TEContentList = Vec::new();
-    let mut used_tokens: usize = 0;
+    let mut total_tokens: usize = 0;
     let mut doc = db::Translating::with_pk(te.gid, te.cid, te.language, te.version);
 
     for unit in content {
@@ -308,8 +308,8 @@ async fn translate(
             }
         }
 
-        let (total_tokens, content) = res.unwrap();
-        used_tokens += total_tokens as usize;
+        let (used_tokens, content) = res.unwrap();
+        total_tokens += used_tokens as usize;
         content_list.extend(unit.replace_texts(&content));
     }
 
@@ -331,7 +331,7 @@ async fn translate(
     }
     let mut cols = ColumnsMap::with_capacity(4);
     cols.set_as("model", &model.to_string());
-    cols.set_as("tokens", &(used_tokens as i32));
+    cols.set_as("tokens", &(total_tokens as i32));
     cols.set_as("content", &content.unwrap());
     cols.set_as("error", &"".to_string());
 
@@ -345,7 +345,8 @@ async fn translate(
                 language = te.language.to_639_3().to_string(),
                 version = te.version,
                 elapsed = start.elapsed().as_millis() as u64,
-                pieces = pieces;
+                pieces = pieces,
+                total_tokens = total_tokens;
                 "{}", err,
             );
         }
@@ -358,7 +359,8 @@ async fn translate(
                 language = te.language.to_639_3().to_string(),
                 version = te.version,
                 elapsed = start.elapsed().as_millis() as u64,
-                pieces = pieces;
+                pieces = pieces,
+                total_tokens = total_tokens;
                 "success",
             );
         }

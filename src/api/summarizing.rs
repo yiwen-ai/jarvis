@@ -150,7 +150,7 @@ async fn summarize(app: Arc<AppState>, te: TEParams) {
     let pieces = content.len();
     let start = Instant::now();
     let tokio_translating = app.translating.clone();
-    let mut used_tokens: usize = 0;
+    let mut total_tokens: usize = 0;
 
     let mut output = String::new();
     for c in content {
@@ -199,7 +199,7 @@ async fn summarize(app: Arc<AppState>, te: TEParams) {
             }
         }
         let res = res.unwrap();
-        used_tokens += res.0 as usize;
+        total_tokens += res.0 as usize;
         output = res.1
     }
 
@@ -207,7 +207,7 @@ async fn summarize(app: Arc<AppState>, te: TEParams) {
     let mut doc = db::Summarizing::with_pk(te.gid, te.cid, te.language, te.version);
     let mut cols = ColumnsMap::with_capacity(4);
     cols.set_as("model", &openai::AIModel::GPT3_5.to_string());
-    cols.set_as("tokens", &(used_tokens as i32));
+    cols.set_as("tokens", &(total_tokens as i32));
     cols.set_as("summary", &output);
     cols.set_as("error", &"".to_string());
 
@@ -222,7 +222,8 @@ async fn summarize(app: Arc<AppState>, te: TEParams) {
                 version = te.version,
                 elapsed = start.elapsed().as_millis() as u64,
                 summary = doc.summary.len(),
-                pieces = pieces;
+                pieces = pieces,
+                total_tokens = total_tokens;
                 "{}", err,
             );
         }
@@ -236,7 +237,8 @@ async fn summarize(app: Arc<AppState>, te: TEParams) {
                 version = te.version,
                 elapsed = start.elapsed().as_millis() as u64,
                 summary = doc.summary.len(),
-                pieces = pieces;
+                pieces = pieces,
+                total_tokens = total_tokens;
                 "success",
             );
         }
