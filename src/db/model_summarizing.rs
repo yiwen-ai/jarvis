@@ -13,6 +13,8 @@ pub struct Summarizing {
     pub language: Language,
     pub version: i16,
     pub model: String,
+    pub progress: i8,
+    pub updated_at: i64,
     pub tokens: i32,
     pub summary: String,
     pub error: String,
@@ -93,37 +95,19 @@ impl Summarizing {
         Ok(())
     }
 
-    // pub async fn save(&mut self, db: &scylladb::ScyllaDB) -> anyhow::Result<bool> {
-    //     let fields = Self::fields();
-    //     self._fields = fields.clone();
-
-    //     let mut cols_name: Vec<&str> = Vec::with_capacity(fields.len());
-    //     let mut vals_name: Vec<&str> = Vec::with_capacity(fields.len());
-    //     let mut params: Vec<&CqlValue> = Vec::with_capacity(fields.len());
-    //     let cols = self.to();
-
-    //     for field in &fields {
-    //         cols_name.push(field);
-    //         vals_name.push("?");
-    //         params.push(cols.get(field).unwrap());
-    //     }
-
-    //     let query = format!(
-    //         "INSERT INTO summarizing ({}) VALUES ({})",
-    //         cols_name.join(","),
-    //         vals_name.join(",")
-    //     );
-
-    //     let _ = db.execute(query, params).await?;
-    //     Ok(true)
-    // }
-
     pub async fn upsert_fields(
         &mut self,
         db: &scylladb::ScyllaDB,
         cols: ColumnsMap,
     ) -> anyhow::Result<bool> {
-        let valid_fields = vec!["model", "tokens", "summary", "error"];
+        let valid_fields = vec![
+            "model",
+            "progress",
+            "updated_at",
+            "tokens",
+            "summary",
+            "error",
+        ];
 
         let mut set_fields: Vec<String> = Vec::with_capacity(cols.len());
         let mut params: Vec<CqlValue> = Vec::with_capacity(cols.len() + 4);

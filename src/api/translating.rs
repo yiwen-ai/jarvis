@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{str::FromStr, sync::Arc, time::Instant};
 use validator::Validate;
 
-use axum_web::context::ReqContext;
+use axum_web::context::{unix_ms, ReqContext};
 use axum_web::erring::{HTTPError, SuccessResponse};
 use axum_web::object::{cbor_from_slice, cbor_to_vec, PackObject};
 use scylla_orm::ColumnsMap;
@@ -33,6 +33,8 @@ pub struct TranslatingOutput {
     pub language: PackObject<Language>, // the origin language detected.
     pub version: u16,
     pub model: String,
+    pub progress: i8,
+    pub updated_at: i64,
     pub tokens: u32,
     pub error: String,
     pub content: PackObject<Vec<u8>>,
@@ -68,6 +70,8 @@ pub async fn get(
         language: to.with(doc.language),
         version: doc.version as u16,
         model: doc.model,
+        progress: doc.progress,
+        updated_at: doc.updated_at,
         tokens: doc.tokens as u32,
         content: to.with(doc.content),
         error: doc.error,
@@ -210,21 +214,32 @@ pub async fn create(
         ));
     }
 
+    let now = unix_ms() as i64;
     let mut doc = db::Translating::with_pk(gid, cid, target_language, input.version as i16);
     if doc
         .get_one(&app.scylla, vec!["model".to_string(), "error".to_string()])
         .await
         .is_ok()
     {
-        if doc.model == model.to_string() && doc.error.is_empty() {
+        if doc.model == model.to_string()
+            && doc.error.is_empty()
+            && now - doc.updated_at < 1800 * 1000
+        {
             return Ok(to.with(SuccessResponse::new(TEOutput {
                 cid: to.with(cid),
                 detected_language: to.with(detected_language),
             })));
         }
-
-        doc.delete(&app.scylla).await?;
     }
+
+    let mut cols = ColumnsMap::with_capacity(6);
+    cols.set_as("model", &model.to_string());
+    cols.set_as("updated_at", &now);
+    cols.set_as("progress", &0i8);
+    cols.set_as("tokens", &0i32);
+    cols.set_as("content", &Vec::<u8>::new());
+    cols.set_as("error", &"".to_string());
+    doc.upsert_fields(&app.scylla, cols).await?;
 
     tokio::spawn(translate(
         app,
@@ -261,6 +276,7 @@ async fn translate(
     let mut total_tokens: usize = 0;
     let mut doc = db::Translating::with_pk(te.gid, te.cid, te.language, te.version);
 
+    let mut progress = 0usize;
     for unit in content {
         let unit_elapsed = start.elapsed().as_millis() as u64;
         let res = app
@@ -278,7 +294,8 @@ async fn translate(
         let ai_elapsed = start.elapsed().as_millis() as u64 - unit_elapsed;
         match res {
             Err(err) => {
-                let mut cols = ColumnsMap::with_capacity(1);
+                let mut cols = ColumnsMap::with_capacity(2);
+                cols.set_as("updated_at", &(unix_ms() as i64));
                 cols.set_as("error", &err.to_string());
                 let _ = doc.upsert_fields(&app.scylla, cols).await;
 
@@ -295,6 +312,13 @@ async fn translate(
                 return;
             }
             Ok(_) => {
+                progress += 1;
+                let mut cols = ColumnsMap::with_capacity(3);
+                cols.set_as("updated_at", &(unix_ms() as i64));
+                cols.set_as("progress", &((progress * 100 / pieces) as i8));
+                cols.set_as("tokens", &(total_tokens as i32));
+                let _ = doc.upsert_fields(&app.scylla, cols).await;
+
                 log::info!(target: "translating",
                     action = "call_openai",
                     rid = te.rid,
@@ -316,6 +340,12 @@ async fn translate(
     // save target lang doc to db
     let content = cbor_to_vec(&content_list);
     if content.is_err() {
+        let err = content.unwrap_err().to_string();
+        let mut cols = ColumnsMap::with_capacity(2);
+        cols.set_as("updated_at", &(unix_ms() as i64));
+        cols.set_as("error", &err);
+        let _ = doc.upsert_fields(&app.scylla, cols).await;
+
         log::warn!(target: "translating",
             action = "to_cbor",
             rid = te.rid,
@@ -325,12 +355,14 @@ async fn translate(
             version = te.version,
             elapsed = start.elapsed().as_millis() as u64,
             pieces = pieces;
-            "{}", content.unwrap_err().to_string(),
+            "{}", err,
         );
         return;
     }
-    let mut cols = ColumnsMap::with_capacity(4);
-    cols.set_as("model", &model.to_string());
+
+    let mut cols = ColumnsMap::with_capacity(5);
+    cols.set_as("updated_at", &(unix_ms() as i64));
+    cols.set_as("progress", &100i8);
     cols.set_as("tokens", &(total_tokens as i32));
     cols.set_as("content", &content.unwrap());
     cols.set_as("error", &"".to_string());

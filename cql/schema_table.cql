@@ -1,12 +1,14 @@
 CREATE TABLE IF NOT EXISTS translating (
-    gid      BLOB,     -- group id, content belong to
-    cid      BLOB,     -- creation id, 12 bytes, https://docs.rs/xid/latest/xid/
-    language TEXT,     -- content's language, ISO 639-3
-    version  SMALLINT, -- creation version
-    model    TEXT,     -- model used for translating, example: "gpt3.5"
-    tokens   INT,      -- tokens uåsed, example: {"gpt3.5": 1299}
-    content  BLOB,     -- a well pruned content in CBOR format
-    error    TEXT,     -- error message
+    gid        BLOB,     -- group id, content belong to
+    cid        BLOB,     -- creation id, 12 bytes, https://docs.rs/xid/latest/xid/
+    language   TEXT,     -- content's language, ISO 639-3
+    version    SMALLINT, -- creation version
+    model      TEXT,     -- model used for translating, example: "gpt3.5"
+    progress   TINYINT,  -- progress, 0-100
+    updated_at BIGINT,   -- updated at, unix time, ms
+    tokens     INT,      -- tokens uåsed, example: {"gpt3.5": 1299}
+    content    BLOB,     -- a well pruned content in CBOR format
+    error      TEXT,     -- error message
     PRIMARY KEY (gid, cid, language, version)
 ) WITH CLUSTERING ORDER BY (cid DESC, language ASC, version DESC)
     AND caching = {'enabled': 'true'}
@@ -16,14 +18,16 @@ CREATE TABLE IF NOT EXISTS translating (
     AND default_time_to_live = 0;
 
 CREATE TABLE IF NOT EXISTS summarizing (
-    gid      BLOB,     -- group id, content belong to
-    cid      BLOB,     -- creation id, 12 bytes, https://docs.rs/xid/latest/xid/
-    language TEXT,     -- content's language, ISO 639-3
-    version  SMALLINT, -- creation version
-    model    TEXT,     -- model used for translating, example: "gpt3.5"
-    tokens   INT,      -- tokens uåsed, example: {"gpt3.5": 1299}
-    summary  TEXT,     -- summary
-    error    TEXT,    -- error message
+    gid        BLOB,     -- group id, content belong to
+    cid        BLOB,     -- creation id, 12 bytes, https://docs.rs/xid/latest/xid/
+    language   TEXT,     -- content's language, ISO 639-3
+    version    SMALLINT, -- creation version
+    model      TEXT,     -- model used for translating, example: "gpt3.5"
+    progress   TINYINT,  -- progress, 0-100
+    updated_at BIGINT,   -- updated at, unix time, ms
+    tokens     INT,      -- tokens uåsed, example: {"gpt3.5": 1299}
+    summary    TEXT,     -- summary
+    error      TEXT,    -- error message
     PRIMARY KEY (gid, cid, language, version)
 ) WITH CLUSTERING ORDER BY (cid DESC, language ASC, version DESC)
     AND caching = {'enabled': 'true'}

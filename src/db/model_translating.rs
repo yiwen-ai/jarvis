@@ -13,6 +13,8 @@ pub struct Translating {
     pub language: Language,
     pub version: i16,
     pub model: String,
+    pub progress: i8,
+    pub updated_at: i64,
     pub tokens: i32,
     pub content: Vec<u8>,
     pub error: String,
@@ -98,7 +100,14 @@ impl Translating {
         db: &scylladb::ScyllaDB,
         cols: ColumnsMap,
     ) -> anyhow::Result<bool> {
-        let valid_fields = vec!["model", "tokens", "content", "error"];
+        let valid_fields = vec![
+            "model",
+            "progress",
+            "updated_at",
+            "tokens",
+            "content",
+            "error",
+        ];
 
         let mut set_fields: Vec<String> = Vec::with_capacity(cols.len());
         let mut params: Vec<CqlValue> = Vec::with_capacity(cols.len() + 4);

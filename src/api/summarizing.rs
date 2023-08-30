@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Instant};
 use validator::Validate;
 
-use axum_web::context::ReqContext;
+use axum_web::context::{unix_ms, ReqContext};
 use axum_web::erring::{HTTPError, SuccessResponse};
 use axum_web::object::{cbor_from_slice, PackObject};
 use scylla_orm::ColumnsMap;
@@ -33,6 +33,8 @@ pub struct SummarizingOutput {
     pub language: PackObject<Language>, // the origin language detected.
     pub version: u16,
     pub model: String,
+    pub progress: i8,
+    pub updated_at: i64,
     pub tokens: u32,
     pub summary: String,
     pub error: String,
@@ -68,6 +70,8 @@ pub async fn get(
         language: to.with(doc.language),
         version: doc.version as u16,
         model: doc.model,
+        progress: doc.progress,
+        updated_at: doc.updated_at,
         tokens: doc.tokens as u32,
         summary: doc.summary,
         error: doc.error,
@@ -99,21 +103,29 @@ pub async fn create(
         return Err(HTTPError::new(400, "Invalid language".to_string()));
     }
 
+    let now = unix_ms() as i64;
     let mut doc = db::Summarizing::with_pk(gid, cid, language, input.version as i16);
     if doc
         .get_one(&app.scylla, vec!["model".to_string(), "error".to_string()])
         .await
         .is_ok()
     {
-        if doc.error.is_empty() {
+        if doc.error.is_empty() && now - doc.updated_at < 1800 * 1000 {
             return Ok(to.with(SuccessResponse::new(TEOutput {
                 cid: to.with(cid),
                 detected_language: to.with(language),
             })));
         }
-
-        doc.delete(&app.scylla).await?;
     }
+
+    let mut cols = ColumnsMap::with_capacity(6);
+    cols.set_as("model", &openai::AIModel::GPT3_5.to_string());
+    cols.set_as("updated_at", &now);
+    cols.set_as("progress", &0i8);
+    cols.set_as("tokens", &0i32);
+    cols.set_as("summary", &"".to_string());
+    cols.set_as("error", &"".to_string());
+    doc.upsert_fields(&app.scylla, cols).await?;
 
     let content: TEContentList =
         cbor_from_slice(&input.content.unwrap_or_default()).map_err(|e| HTTPError {
@@ -151,8 +163,10 @@ async fn summarize(app: Arc<AppState>, te: TEParams) {
     let start = Instant::now();
     let tokio_translating = app.translating.clone();
     let mut total_tokens: usize = 0;
+    let mut doc = db::Summarizing::with_pk(te.gid, te.cid, te.language, te.version);
 
     let mut output = String::new();
+    let mut progress = 0usize;
     for c in content {
         let unit_elapsed = start.elapsed().as_millis() as u64;
         let text = if output.is_empty() {
@@ -168,8 +182,8 @@ async fn summarize(app: Arc<AppState>, te: TEParams) {
         let ai_elapsed = start.elapsed().as_millis() as u64 - unit_elapsed;
         match res {
             Err(err) => {
-                let mut doc = db::Summarizing::with_pk(te.gid, te.cid, te.language, te.version);
-                let mut cols = ColumnsMap::with_capacity(1);
+                let mut cols = ColumnsMap::with_capacity(2);
+                cols.set_as("updated_at", &(unix_ms() as i64));
                 cols.set_as("error", &err.to_string());
                 let _ = doc.upsert_fields(&app.scylla, cols).await;
 
@@ -186,6 +200,13 @@ async fn summarize(app: Arc<AppState>, te: TEParams) {
                 return;
             }
             Ok(_) => {
+                progress += 1;
+                let mut cols = ColumnsMap::with_capacity(3);
+                cols.set_as("updated_at", &(unix_ms() as i64));
+                cols.set_as("progress", &((progress * 100 / pieces) as i8));
+                cols.set_as("tokens", &(total_tokens as i32));
+                let _ = doc.upsert_fields(&app.scylla, cols).await;
+
                 log::info!(target: "summarizing",
                     action = "call_openai",
                     rid = te.rid,
@@ -204,9 +225,9 @@ async fn summarize(app: Arc<AppState>, te: TEParams) {
     }
 
     // save target lang doc to db
-    let mut doc = db::Summarizing::with_pk(te.gid, te.cid, te.language, te.version);
-    let mut cols = ColumnsMap::with_capacity(4);
-    cols.set_as("model", &openai::AIModel::GPT3_5.to_string());
+    let mut cols = ColumnsMap::with_capacity(5);
+    cols.set_as("updated_at", &(unix_ms() as i64));
+    cols.set_as("progress", &100i8);
     cols.set_as("tokens", &(total_tokens as i32));
     cols.set_as("summary", &output);
     cols.set_as("error", &"".to_string());
