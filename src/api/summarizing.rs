@@ -106,11 +106,20 @@ pub async fn create(
     let now = unix_ms() as i64;
     let mut doc = db::Summarizing::with_pk(gid, cid, language, input.version as i16);
     if doc
-        .get_one(&app.scylla, vec!["model".to_string(), "error".to_string()])
+        .get_one(
+            &app.scylla,
+            vec![
+                "model".to_string(),
+                "updated_at".to_string(),
+                "error".to_string(),
+            ],
+        )
         .await
         .is_ok()
     {
-        if doc.error.is_empty() && now - doc.updated_at < 1800 * 1000 {
+        if doc.error.is_empty() && now - doc.updated_at < 3600 * 1000 {
+            ctx.set("exists", true.into()).await;
+
             return Ok(to.with(SuccessResponse::new(TEOutput {
                 cid: to.with(cid),
                 detected_language: to.with(language),
@@ -180,48 +189,47 @@ async fn summarize(app: Arc<AppState>, te: TEParams) {
             .summarize(&te.rid, &te.user, te.language.to_name(), &text)
             .await;
         let ai_elapsed = start.elapsed().as_millis() as u64 - unit_elapsed;
-        match res {
-            Err(err) => {
-                let mut cols = ColumnsMap::with_capacity(2);
-                cols.set_as("updated_at", &(unix_ms() as i64));
-                cols.set_as("error", &err.to_string());
-                let _ = doc.upsert_fields(&app.scylla, cols).await;
+        if let Err(err) = res {
+            let mut cols = ColumnsMap::with_capacity(2);
+            cols.set_as("updated_at", &(unix_ms() as i64));
+            cols.set_as("error", &err.to_string());
+            let _ = doc.upsert_fields(&app.scylla, cols).await;
 
-                log::error!(target: "summarizing",
-                    action = "call_openai",
-                    rid = te.rid,
-                    gid = te.gid.to_string(),
-                    cid = te.cid.to_string(),
-                    language = te.language.to_639_3().to_string(),
-                    version = te.version,
-                    elapsed = ai_elapsed;
-                    "{}", err.to_string(),
-                );
-                return;
-            }
-            Ok(_) => {
-                progress += 1;
-                let mut cols = ColumnsMap::with_capacity(3);
-                cols.set_as("updated_at", &(unix_ms() as i64));
-                cols.set_as("progress", &((progress * 100 / pieces) as i8));
-                cols.set_as("tokens", &(total_tokens as i32));
-                let _ = doc.upsert_fields(&app.scylla, cols).await;
-
-                log::info!(target: "summarizing",
-                    action = "call_openai",
-                    rid = te.rid,
-                    gid = te.gid.to_string(),
-                    cid = te.cid.to_string(),
-                    language = te.language.to_639_3().to_string(),
-                    version = te.version,
-                    elapsed = ai_elapsed;
-                    "success",
-                );
-            }
+            log::error!(target: "summarizing",
+                action = "processing",
+                rid = te.rid,
+                gid = te.gid.to_string(),
+                cid = te.cid.to_string(),
+                language = te.language.to_639_3().to_string(),
+                version = te.version,
+                elapsed = ai_elapsed;
+                "{}", err.to_string(),
+            );
+            return;
         }
+
         let res = res.unwrap();
         total_tokens += res.0 as usize;
-        output = res.1
+        progress += 1;
+        output = res.1;
+
+        let mut cols = ColumnsMap::with_capacity(3);
+        cols.set_as("updated_at", &(unix_ms() as i64));
+        cols.set_as("progress", &((progress * 100 / pieces) as i8));
+        cols.set_as("tokens", &(total_tokens as i32));
+        let _ = doc.upsert_fields(&app.scylla, cols).await;
+
+        log::info!(target: "summarizing",
+            action = "processing",
+            rid = te.rid,
+            gid = te.gid.to_string(),
+            cid = te.cid.to_string(),
+            language = te.language.to_639_3().to_string(),
+            version = te.version,
+            elapsed = ai_elapsed,
+            total_tokens = total_tokens;
+            "{}/{}", progress, pieces,
+        );
     }
 
     // save target lang doc to db

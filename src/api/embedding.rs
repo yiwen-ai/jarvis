@@ -263,6 +263,7 @@ async fn embedding(app: Arc<AppState>, te: TEParams) {
     let tokio_embedding = app.embedding.clone();
     let mut total_tokens: i32 = 0;
 
+    let mut progress = 0usize;
     for unit_group in content {
         let unit_elapsed = start.elapsed().as_millis() as u64;
         let embedding_input: Vec<String> = unit_group
@@ -272,34 +273,33 @@ async fn embedding(app: Arc<AppState>, te: TEParams) {
         let res = app.ai.embedding(&te.rid, &te.user, &embedding_input).await;
 
         let ai_elapsed = start.elapsed().as_millis() as u64 - unit_elapsed;
-        match res {
-            Err(err) => {
-                log::error!(target: "embedding",
-                    action = "call_openai",
-                    rid = te.rid,
-                    gid = te.gid.to_string(),
-                    cid = te.cid.to_string(),
-                    language = te.language.to_string(),
-                    elapsed = ai_elapsed;
-                    "{}", err.to_string(),
-                );
-                continue;
-            }
-            Ok(_) => {
-                log::info!(target: "embedding",
-                    action = "call_openai",
-                    rid = te.rid,
-                    gid = te.gid.to_string(),
-                    cid = te.cid.to_string(),
-                    language = te.language.to_string(),
-                    elapsed = ai_elapsed;
-                    "success",
-                );
-            }
+        if let Err(err) = res {
+            log::error!(target: "embedding",
+                action = "processing",
+                rid = te.rid,
+                gid = te.gid.to_string(),
+                cid = te.cid.to_string(),
+                language = te.language.to_string(),
+                elapsed = ai_elapsed;
+                "{}", err.to_string(),
+            );
+            continue;
         }
 
+        progress += 1;
         let (used_tokens, embeddings) = res.unwrap();
         total_tokens += used_tokens as i32;
+        log::info!(target: "embedding",
+            action = "processing",
+            rid = te.rid,
+            gid = te.gid.to_string(),
+            cid = te.cid.to_string(),
+            language = te.language.to_string(),
+            elapsed = ai_elapsed,
+            total_tokens = total_tokens;
+            "{}/{}", progress, pieces,
+        );
+
         for (i, unit) in unit_group.iter().enumerate() {
             let mut doc = db::Embedding::from(te.cid, te.language, unit.ids().join(","));
             doc.gid = te.gid;
