@@ -122,6 +122,18 @@ impl Translating {
         let _ = db.execute(query, params).await?;
         Ok(true)
     }
+
+    pub async fn delete(&mut self, db: &scylladb::ScyllaDB) -> anyhow::Result<bool> {
+        let query = "DELETE FROM translating WHERE gid=? AND cid=? AND language=? AND version=?";
+        let params = (
+            self.gid.to_cql(),
+            self.cid.to_cql(),
+            self.language.to_cql(),
+            self.version.to_cql(),
+        );
+        let _ = db.execute(query, params).await?;
+        Ok(true)
+    }
 }
 
 #[cfg(test)]

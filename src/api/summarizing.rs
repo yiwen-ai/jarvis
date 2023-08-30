@@ -99,6 +99,22 @@ pub async fn create(
         return Err(HTTPError::new(400, "Invalid language".to_string()));
     }
 
+    let mut doc = db::Summarizing::with_pk(gid, cid, language, input.version as i16);
+    if doc
+        .get_one(&app.scylla, vec!["model".to_string(), "error".to_string()])
+        .await
+        .is_ok()
+    {
+        if doc.error.is_empty() {
+            return Ok(to.with(SuccessResponse::new(TEOutput {
+                cid: to.with(cid),
+                detected_language: to.with(language),
+            })));
+        }
+
+        doc.delete(&app.scylla).await?;
+    }
+
     let content: TEContentList =
         cbor_from_slice(&input.content.unwrap_or_default()).map_err(|e| HTTPError {
             code: 400,

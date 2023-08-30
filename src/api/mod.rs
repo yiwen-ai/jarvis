@@ -145,10 +145,15 @@ impl TEUnit {
         ids
     }
 
-    pub fn to_translating_list(&self) -> Vec<&Vec<String>> {
-        let mut res: Vec<&Vec<String>> = Vec::with_capacity(self.content.len());
+    pub fn to_translating_list(&self) -> Vec<Vec<String>> {
+        let mut res: Vec<Vec<String>> = Vec::with_capacity(self.content.len());
+        let mut i = 0u32;
         for c in &self.content {
-            res.push(&c.texts);
+            i += 1;
+            let mut l: Vec<String> = Vec::with_capacity(c.texts.len() + 1);
+            l.push(format!("{}:", i));
+            l.extend_from_slice(&c.texts);
+            res.push(l);
         }
         res
     }
@@ -173,9 +178,13 @@ impl TEUnit {
         }
 
         for (i, v) in input.iter().enumerate() {
+            let mut v = v.to_owned();
+            if !v.is_empty() && v[0] == format!("{}:", i + 1) {
+                v.remove(0);
+            }
             res.push(TEContent {
                 id: self.content[i].id.clone(),
-                texts: v.to_owned(),
+                texts: v,
             });
         }
         res

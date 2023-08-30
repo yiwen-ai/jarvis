@@ -210,6 +210,22 @@ pub async fn create(
         ));
     }
 
+    let mut doc = db::Translating::with_pk(gid, cid, target_language, input.version as i16);
+    if doc
+        .get_one(&app.scylla, vec!["model".to_string(), "error".to_string()])
+        .await
+        .is_ok()
+    {
+        if doc.model == model.to_string() && doc.error.is_empty() {
+            return Ok(to.with(SuccessResponse::new(TEOutput {
+                cid: to.with(cid),
+                detected_language: to.with(detected_language),
+            })));
+        }
+
+        doc.delete(&app.scylla).await?;
+    }
+
     tokio::spawn(translate(
         app,
         TEParams {
