@@ -145,19 +145,6 @@ impl TEUnit {
         ids
     }
 
-    pub fn to_translating_list(&self) -> Vec<Vec<String>> {
-        let mut res: Vec<Vec<String>> = Vec::with_capacity(self.content.len());
-        let mut i = 0u32;
-        for c in &self.content {
-            i += 1;
-            let mut l: Vec<String> = Vec::with_capacity(c.texts.len() + 1);
-            l.push(format!("{}:", i));
-            l.extend_from_slice(&c.texts);
-            res.push(l);
-        }
-        res
-    }
-
     pub fn to_embedding_string(&self) -> String {
         let mut tes: String = String::new();
         for c in &self.content {
@@ -171,23 +158,64 @@ impl TEUnit {
         tes.trim().to_string()
     }
 
-    pub fn replace_texts(&self, input: &Vec<Vec<String>>) -> TEContentList {
-        let mut res: TEContentList = Vec::with_capacity(input.len());
-        if input.len() != self.content.len() {
-            return res;
-        }
-
-        for (i, v) in input.iter().enumerate() {
-            let mut v = v.to_owned();
-            if !v.is_empty() && v[0] == format!("{}:", i + 1) {
-                v.remove(0);
-            }
-            res.push(TEContent {
-                id: self.content[i].id.clone(),
-                texts: v,
-            });
+    pub fn to_translating_list(&self) -> Vec<Vec<String>> {
+        let mut res: Vec<Vec<String>> = Vec::with_capacity(self.content.len());
+        let mut i = 0u32;
+        for c in &self.content {
+            i += 1;
+            let mut l: Vec<String> = Vec::with_capacity(c.texts.len() + 1);
+            l.push(format!("{}:", i));
+            l.extend_from_slice(&c.texts);
+            res.push(l);
         }
         res
+    }
+
+    pub fn replace_texts(&self, input: &Vec<Vec<String>>) -> TEContentList {
+        let len = self.content.len();
+        let mut res: TEContentList = Vec::with_capacity(len);
+        let mut iter = input.iter();
+        let (mut o, mut v) = Self::extract_order(iter.next());
+        for i in 0..len {
+            let mut te = TEContent {
+                id: self.content[i].id.clone(),
+                texts: Vec::new(),
+            };
+
+            if o <= i + 1 {
+                te.texts.extend_from_slice(v);
+                (o, v) = Self::extract_order(iter.next());
+            }
+            res.push(te);
+        }
+
+        res
+    }
+
+    // ["1:", "text1", ...] => (1, ["text1", ...])
+    // ["text1", ...] => (0, ["text1", ...])
+    // [] => (0, [])
+    fn extract_order(v: Option<&Vec<String>>) -> (usize, &[String]) {
+        match v {
+            Some(v) => {
+                if v.is_empty() {
+                    return (0, v);
+                }
+
+                let o = if v[0].ends_with(':') {
+                    v[0][..v[0].len() - 1].parse::<usize>().unwrap_or(0)
+                } else {
+                    0
+                };
+
+                if o > 0 {
+                    (o, &v[1..])
+                } else {
+                    (0, v)
+                }
+            }
+            None => (0, &[]),
+        }
     }
 }
 
@@ -278,7 +306,6 @@ impl TESegmenter for TEContentList {
             let ctl = tokens_len(&strs);
 
             if tokens + ctl >= SUMMARIZE_HIGH_TOKENS {
-                tokens += ctl;
                 unit.push(strs);
                 list.push(unit.join("\n"));
                 tokens = 0;
@@ -361,5 +388,140 @@ impl TESegmenter for TEContentList {
         }
 
         list
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn teunit_to_translating() {
+        let unit = TEUnit {
+            tokens: 0,
+            content: vec![
+                TEContent {
+                    id: "abc".to_string(),
+                    texts: vec!["text1".to_string(), "text2".to_string()],
+                },
+                TEContent {
+                    id: "efg".to_string(),
+                    texts: vec!["text3".to_string(), "text4".to_string()],
+                },
+            ],
+        };
+
+        let rt = unit.to_translating_list();
+        assert_eq!(rt.len(), 2);
+        assert_eq!(
+            rt[0],
+            vec!["1:".to_string(), "text1".to_string(), "text2".to_string()]
+        );
+        assert_eq!(
+            rt[1],
+            vec!["2:".to_string(), "text3".to_string(), "text4".to_string()]
+        );
+
+        let rt = unit.replace_texts(&vec![
+            vec!["1:".to_string(), "text_1".to_string(), "text_2".to_string()],
+            vec!["2:".to_string(), "text_3".to_string(), "text_4".to_string()],
+        ]);
+        assert_eq!(rt.len(), 2);
+        assert_eq!(
+            rt[0],
+            TEContent {
+                id: "abc".to_string(),
+                texts: vec!["text_1".to_string(), "text_2".to_string()],
+            },
+        );
+        assert_eq!(
+            rt[1],
+            TEContent {
+                id: "efg".to_string(),
+                texts: vec!["text_3".to_string(), "text_4".to_string()],
+            },
+        );
+
+        let rt = unit.replace_texts(&vec![
+            vec!["text_1".to_string(), "text_2".to_string()],
+            vec!["2:".to_string(), "text_3".to_string(), "text_4".to_string()],
+        ]);
+        assert_eq!(rt.len(), 2);
+        assert_eq!(
+            rt[0],
+            TEContent {
+                id: "abc".to_string(),
+                texts: vec!["text_1".to_string(), "text_2".to_string()],
+            },
+        );
+        assert_eq!(
+            rt[1],
+            TEContent {
+                id: "efg".to_string(),
+                texts: vec!["text_3".to_string(), "text_4".to_string()],
+            },
+        );
+
+        let rt = unit.replace_texts(&vec![
+            vec!["1:".to_string(), "text_1".to_string(), "text_2".to_string()],
+            vec!["text_3".to_string(), "text_4".to_string()],
+        ]);
+        assert_eq!(rt.len(), 2);
+        assert_eq!(
+            rt[0],
+            TEContent {
+                id: "abc".to_string(),
+                texts: vec!["text_1".to_string(), "text_2".to_string()],
+            },
+        );
+        assert_eq!(
+            rt[1],
+            TEContent {
+                id: "efg".to_string(),
+                texts: vec!["text_3".to_string(), "text_4".to_string()],
+            },
+        );
+
+        let rt = unit.replace_texts(&vec![vec![
+            "1:".to_string(),
+            "text_1".to_string(),
+            "text_2".to_string(),
+        ]]);
+        assert_eq!(rt.len(), 2);
+        assert_eq!(
+            rt[0],
+            TEContent {
+                id: "abc".to_string(),
+                texts: vec!["text_1".to_string(), "text_2".to_string()],
+            },
+        );
+        assert_eq!(
+            rt[1],
+            TEContent {
+                id: "efg".to_string(),
+                texts: vec![],
+            },
+        );
+
+        let rt = unit.replace_texts(&vec![vec![
+            "2:".to_string(),
+            "text_1".to_string(),
+            "text_2".to_string(),
+        ]]);
+        assert_eq!(rt.len(), 2);
+        assert_eq!(
+            rt[0],
+            TEContent {
+                id: "abc".to_string(),
+                texts: vec![],
+            },
+        );
+        assert_eq!(
+            rt[1],
+            TEContent {
+                id: "efg".to_string(),
+                texts: vec!["text_1".to_string(), "text_2".to_string()],
+            },
+        );
     }
 }

@@ -253,7 +253,7 @@ impl OpenAI {
 
                     let output = if need_record { &oc } else { "" };
                     log::info!(target: "translating",
-                        action = "fix_output",
+                        action = "parse_output",
                         rid = rid,
                         user = user,
                         fixed = content.is_ok(),
@@ -264,7 +264,7 @@ impl OpenAI {
                 }
                 Err(er) => {
                     log::error!(target: "translating",
-                        action = "fix_output",
+                        action = "parse_output",
                         rid = rid,
                         user = user,
                         fixed = false,
@@ -308,8 +308,9 @@ impl OpenAI {
                 input.len(),
                 content.len()
             );
-            log::error!(target: "translating",
-                action = "parse_output",
+
+            log::warn!(target: "translating",
+                action = "call_openai",
                 elapsed = start.elapsed().as_millis() as u64,
                 rid = rid,
                 user = user,
@@ -321,24 +322,19 @@ impl OpenAI {
                 finish_reason = finish_reason;
                 "{}", err,
             );
-
-            return Err(Error::new(HTTPError {
-                code: 500,
-                message: err,
-                data: None,
-            }));
+        } else {
+            log::info!(target: "translating",
+                action = "call_openai",
+                elapsed = start.elapsed().as_millis() as u64,
+                rid = rid,
+                user = user,
+                prompt_tokens = usage.prompt_tokens,
+                completion_tokens = usage.completion_tokens,
+                total_tokens = usage.total_tokens,
+                finish_reason = finish_reason;
+                "",
+            );
         }
-
-        log::info!(target: "translating",
-            action = "call_openai",
-            elapsed = start.elapsed().as_millis() as u64,
-            rid = rid,
-            prompt_tokens = usage.prompt_tokens,
-            completion_tokens = usage.completion_tokens,
-            total_tokens = usage.total_tokens,
-            finish_reason = finish_reason;
-            "",
-        );
 
         Ok((usage.total_tokens, content))
     }
