@@ -227,17 +227,15 @@ pub async fn create(
         )
         .await
         .is_ok()
+        && doc.model == model.to_string()
+        && doc.error.is_empty()
+        && now - doc.updated_at < 3600 * 1000
     {
-        if doc.model == model.to_string()
-            && doc.error.is_empty()
-            && now - doc.updated_at < 3600 * 1000
-        {
-            ctx.set("exists", true.into()).await;
-            return Ok(to.with(SuccessResponse::new(TEOutput {
-                cid: to.with(cid),
-                detected_language: to.with(detected_language),
-            })));
-        }
+        ctx.set("exists", true.into()).await;
+        return Ok(to.with(SuccessResponse::new(TEOutput {
+            cid: to.with(cid),
+            detected_language: to.with(detected_language),
+        })));
     }
 
     let mut cols = ColumnsMap::with_capacity(6);

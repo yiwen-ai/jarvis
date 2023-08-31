@@ -5,7 +5,11 @@ use axum::{
 };
 use scylla::transport::query_result::SingleRowError;
 use serde::{Deserialize, Serialize};
-use std::{convert::From, error::Error, fmt, fmt::Debug};
+use std::{
+    convert::From,
+    error::Error,
+    fmt::{self, Debug},
+};
 use validator::{ValidationError, ValidationErrors};
 
 use crate::object::PackObject;
@@ -49,6 +53,14 @@ impl HTTPError {
         HTTPError {
             code,
             message,
+            data: None,
+        }
+    }
+
+    pub fn with_500<T: ToString>(err: T) -> Self {
+        HTTPError {
+            code: 500,
+            message: err.to_string(),
             data: None,
         }
     }

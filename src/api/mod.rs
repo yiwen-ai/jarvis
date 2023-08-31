@@ -171,7 +171,7 @@ impl TEUnit {
         res
     }
 
-    pub fn replace_texts(&self, input: &Vec<Vec<String>>) -> TEContentList {
+    pub fn replace_texts(&self, input: &[Vec<String>]) -> TEContentList {
         let len = self.content.len();
         let mut res: TEContentList = Vec::with_capacity(len);
         let mut iter = input.iter();
