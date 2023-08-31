@@ -228,14 +228,16 @@ pub trait TESegmenter {
 
 impl TESegmenter for TEContentList {
     fn detect_lang_string(&self) -> String {
-        let mut detect_language = String::new();
+        let mut detect_language = String::with_capacity(5000);
 
         for c in self {
-            if detect_language.len() < 1024 {
-                detect_language.push_str(c.to_string('\n').as_str());
-                detect_language.push('\n');
+            if detect_language.len() > 4096 {
+                break;
             }
+            detect_language.push_str(c.to_string('\n').as_str());
+            detect_language.push('\n');
         }
+
         detect_language
     }
 
@@ -245,7 +247,7 @@ impl TESegmenter for TEContentList {
             tokens: 0,
             content: Vec::new(),
         };
-        let (st, ht) = model.translating_max_tokens();
+        let (st, ht) = model.translating_segment_tokens();
 
         for c in self {
             if c.texts.is_empty() {
@@ -265,13 +267,13 @@ impl TESegmenter for TEContentList {
 
             let ctl = tokens_len(&c.to_translating_string());
 
-            if unit.tokens + ctl >= ht {
-                unit.tokens += ctl;
-                unit.content.push(c.clone());
-                list.push(unit);
+            if unit.tokens + ctl > ht {
+                if !unit.content.is_empty() {
+                    list.push(unit);
+                }
                 unit = TEUnit {
-                    tokens: 0,
-                    content: Vec::new(),
+                    tokens: ctl,
+                    content: vec![c.clone()],
                 };
             } else {
                 unit.tokens += ctl;
@@ -305,11 +307,14 @@ impl TESegmenter for TEContentList {
             let strs = c.to_string(' ');
             let ctl = tokens_len(&strs);
 
-            if tokens + ctl >= SUMMARIZE_HIGH_TOKENS {
-                unit.push(strs);
-                list.push(unit.join("\n"));
-                tokens = 0;
+            if tokens + ctl > SUMMARIZE_HIGH_TOKENS {
+                if !unit.is_empty() {
+                    list.push(unit.join("\n"));
+                }
+
+                tokens = ctl;
                 unit.truncate(0);
+                unit.push(strs);
             } else {
                 tokens += ctl;
                 unit.push(strs);

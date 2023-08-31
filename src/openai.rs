@@ -12,6 +12,7 @@ use tokio::time::{sleep, Duration};
 
 use crate::conf::AI;
 use crate::json_util::RawJSONArray;
+use crate::tokenizer::tokens_len;
 use axum_web::erring::HTTPError;
 
 const COMPRESS_MIN_LENGTH: usize = 256;
@@ -47,11 +48,18 @@ impl AIModel {
         }
     }
 
-    // return (section_tokens, max_tokens)
-    pub fn translating_max_tokens(&self) -> (usize, usize) {
+    // return (recommend, high)
+    pub fn translating_segment_tokens(&self) -> (usize, usize) {
         match self {
-            AIModel::GPT3_5 => (1200, 1800),
-            AIModel::GPT4 => (2400, 3600),
+            AIModel::GPT3_5 => (1200, 1600),
+            AIModel::GPT4 => (2400, 3200),
+        }
+    }
+
+    pub fn max_tokens(&self) -> usize {
+        match self {
+            AIModel::GPT3_5 => 4096,
+            AIModel::GPT4 => 8192,
         }
     }
 }
@@ -209,7 +217,8 @@ impl OpenAI {
                         rid = rid,
                         user = user,
                         status = er.code,
-                        headers = log::as_serde!(er.data.as_ref());
+                        headers = log::as_serde!(er.data.as_ref()),
+                        input = text;
                         "{}", &er.message,
                     );
                     return Err(Error::new(er));
@@ -220,7 +229,8 @@ impl OpenAI {
                         action = "call_openai",
                         elapsed = start.elapsed().as_millis() as u64,
                         rid = rid,
-                        user = user;
+                        user = user,
+                        input = text;
                         "{}", er.to_string(),
                     );
                     return Err(er);
@@ -359,7 +369,8 @@ impl OpenAI {
                         rid = rid,
                         user = user,
                         status = er.code,
-                        headers = log::as_serde!(er.data.as_ref());
+                        headers = log::as_serde!(er.data.as_ref()),
+                        input = input;
                         "{}", &er.message,
                     );
                     return Err(Error::new(er));
@@ -370,7 +381,8 @@ impl OpenAI {
                         action = "call_openai",
                         elapsed = start.elapsed().as_millis() as u64,
                         rid = rid,
-                        user = user;
+                        user = user,
+                        input = input;
                         "{}", er.to_string(),
                     );
                     return Err(er);
@@ -507,13 +519,21 @@ impl OpenAI {
             }));
         }
 
+        let input_tokens = tokens_len(text);
+
         let (max_tokens, model) = match model {
-            AIModel::GPT3_5 => (2000u16, AIModel::GPT3_5.openai_name()),
-            AIModel::GPT4 => (4000u16, AIModel::GPT4.openai_name()),
+            AIModel::GPT3_5 => (
+                AIModel::GPT3_5.max_tokens() - input_tokens - 128,
+                AIModel::GPT3_5.openai_name(),
+            ),
+            AIModel::GPT4 => (
+                AIModel::GPT4.max_tokens() - input_tokens - 128,
+                AIModel::GPT4.openai_name(),
+            ),
         };
 
         let mut req_body = CreateChatCompletionRequestArgs::default()
-        .max_tokens(max_tokens)
+        .max_tokens(max_tokens as u16)
         .model(model)
         .temperature(0f32)
         .messages([
