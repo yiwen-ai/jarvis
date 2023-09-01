@@ -434,7 +434,7 @@ mod tests {
             vec!["2:".to_string(), "text3".to_string(), "text4".to_string()]
         );
 
-        let rt = unit.replace_texts(&vec![
+        let rt = unit.replace_texts(&[
             vec!["1:".to_string(), "text_1".to_string(), "text_2".to_string()],
             vec!["2:".to_string(), "text_3".to_string(), "text_4".to_string()],
         ]);
@@ -454,7 +454,7 @@ mod tests {
             },
         );
 
-        let rt = unit.replace_texts(&vec![
+        let rt = unit.replace_texts(&[
             vec!["text_1".to_string(), "text_2".to_string()],
             vec!["2:".to_string(), "text_3".to_string(), "text_4".to_string()],
         ]);
@@ -474,7 +474,7 @@ mod tests {
             },
         );
 
-        let rt = unit.replace_texts(&vec![
+        let rt = unit.replace_texts(&[
             vec!["1:".to_string(), "text_1".to_string(), "text_2".to_string()],
             vec!["text_3".to_string(), "text_4".to_string()],
         ]);
@@ -494,7 +494,7 @@ mod tests {
             },
         );
 
-        let rt = unit.replace_texts(&vec![vec![
+        let rt = unit.replace_texts(&[vec![
             "1:".to_string(),
             "text_1".to_string(),
             "text_2".to_string(),
@@ -515,7 +515,7 @@ mod tests {
             },
         );
 
-        let rt = unit.replace_texts(&vec![vec![
+        let rt = unit.replace_texts(&[vec![
             "2:".to_string(),
             "text_1".to_string(),
             "text_2".to_string(),
