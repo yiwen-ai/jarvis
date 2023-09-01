@@ -201,9 +201,11 @@ impl TEUnit {
                 if v.is_empty() {
                     return (0, v);
                 }
-
-                let o = if v[0].ends_with(':') {
-                    v[0][..v[0].len() - 1].parse::<usize>().unwrap_or(0)
+                // the ':' maybe translated by AI
+                let o = if v[0].ends_with(&COLONS) {
+                    let mut s = v[0].clone();
+                    s.pop();
+                    s.parse::<usize>().unwrap_or(0)
                 } else {
                     0
                 };
@@ -218,6 +220,11 @@ impl TEUnit {
         }
     }
 }
+
+// https://en.wikipedia.org/wiki/Colon_(punctuation)
+const COLONS: [char; 8] = [
+    '\u{003A}', '\u{02F8}', '\u{05C3}', '\u{2236}', '\u{A789}', '\u{FE13}', '\u{FF1A}', '\u{FE55}',
+];
 
 pub trait TESegmenter {
     fn detect_lang_string(&self) -> String;

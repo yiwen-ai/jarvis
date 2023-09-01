@@ -79,6 +79,10 @@ impl Qdrant {
                 vectors: p.vectors,
             })
             .collect();
+        if points.is_empty() {
+            return Ok(());
+        }
+
         self.client_public
             .upsert_points(&self.collection_pub, points, None)
             .await
