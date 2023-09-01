@@ -209,7 +209,8 @@ async fn summarize(app: Arc<AppState>, te: TEParams) {
         }
 
         let res = res.unwrap();
-        total_tokens += res.0 as usize;
+        let used_tokens = res.0 as usize;
+        total_tokens += used_tokens;
         progress += 1;
         output = res.1;
 
@@ -227,6 +228,8 @@ async fn summarize(app: Arc<AppState>, te: TEParams) {
             language = te.language.to_639_3().to_string(),
             version = te.version,
             elapsed = ai_elapsed,
+            tokens = used_tokens,
+            total_elapsed = start.elapsed().as_millis(),
             total_tokens = total_tokens;
             "{}/{}", progress, pieces,
         );

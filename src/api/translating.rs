@@ -336,6 +336,8 @@ async fn translate(
             language = te.language.to_639_3().to_string(),
             version = te.version,
             elapsed = ai_elapsed,
+            tokens = used_tokens,
+            total_elapsed = start.elapsed().as_millis(),
             total_tokens = total_tokens;
             "{}/{}", progress, pieces,
         );

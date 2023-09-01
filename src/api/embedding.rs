@@ -279,7 +279,7 @@ async fn embedding(app: Arc<AppState>, te: TEParams) {
                 rid = te.rid,
                 gid = te.gid.to_string(),
                 cid = te.cid.to_string(),
-                language = te.language.to_string(),
+                language = te.language.to_639_3().to_string(),
                 elapsed = ai_elapsed;
                 "{}", err.to_string(),
             );
@@ -294,8 +294,10 @@ async fn embedding(app: Arc<AppState>, te: TEParams) {
             rid = te.rid,
             gid = te.gid.to_string(),
             cid = te.cid.to_string(),
-            language = te.language.to_string(),
+            language = te.language.to_639_3().to_string(),
             elapsed = ai_elapsed,
+            tokens = used_tokens,
+            total_elapsed = start.elapsed().as_millis(),
             total_tokens = total_tokens;
             "{}/{}", progress, pieces,
         );
@@ -311,7 +313,7 @@ async fn embedding(app: Arc<AppState>, te: TEParams) {
                     rid = te.rid,
                     gid = te.gid.to_string(),
                     cid = te.cid.to_string(),
-                    language = te.language.to_string(),
+                    language = te.language.to_639_3().to_string(),
                     elapsed = ai_elapsed;
                     "{}", err,
                 );
@@ -327,7 +329,7 @@ async fn embedding(app: Arc<AppState>, te: TEParams) {
                         rid = te.rid,
                         gid = te.gid.to_string(),
                         cid = te.cid.to_string(),
-                        language = te.language.to_string(),
+                        language = te.language.to_639_3().to_string(),
                         used_tokens = used_tokens,
                         ids = log::as_serde!(unit.ids()),
                         ai_elapsed = ai_elapsed,
@@ -341,7 +343,7 @@ async fn embedding(app: Arc<AppState>, te: TEParams) {
                         rid = te.rid,
                         gid = te.gid.to_string(),
                         cid = te.cid.to_string(),
-                        language = te.language.to_string(),
+                        language = te.language.to_639_3().to_string(),
                         used_tokens = used_tokens,
                         ids = log::as_serde!(unit.ids()),
                         ai_elapsed = ai_elapsed,
@@ -357,7 +359,7 @@ async fn embedding(app: Arc<AppState>, te: TEParams) {
                                 rid = te.rid,
                                 gid = te.gid.to_string(),
                                 cid = te.cid.to_string(),
-                                language = te.language.to_string(),
+                                language = te.language.to_639_3().to_string(),
                                 ai_elapsed = ai_elapsed,
                                 scylla_elapsed = scylla_elapsed,
                                 elapsed = start.elapsed().as_millis() as u64 - scylla_elapsed - ai_elapsed - unit_elapsed;
@@ -370,7 +372,7 @@ async fn embedding(app: Arc<AppState>, te: TEParams) {
                                 rid = te.rid,
                                 gid = te.gid.to_string(),
                                 cid = te.cid.to_string(),
-                                language = te.language.to_string(),
+                                language = te.language.to_639_3().to_string(),
                                 ai_elapsed = ai_elapsed,
                                 scylla_elapsed = scylla_elapsed,
                                 elapsed = start.elapsed().as_millis() as u64- scylla_elapsed- ai_elapsed - unit_elapsed;
@@ -388,7 +390,7 @@ async fn embedding(app: Arc<AppState>, te: TEParams) {
         rid = te.rid,
         gid = te.gid.to_string(),
         cid = te.cid.to_string(),
-        language = te.language.to_string(),
+        language = te.language.to_639_3().to_string(),
         elapsed = start.elapsed().as_millis() as u64,
         pieces = pieces,
         total_tokens = total_tokens;

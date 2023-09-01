@@ -526,14 +526,14 @@ impl OpenAI {
             .request(chat_url.clone(), api.headers.clone(), rid, &req_body)
             .await?;
 
-        match Self::extract_response(res).await {
+        match Self::extract_chat_response(res).await {
             Ok(rt) => Ok(rt),
             Err(err) if err.code == 422 => {
                 // only for gpt-3.5, run with gpt-3.5-16k
                 // should not happen for gpt-4
                 chat_url = api.large_chat_url.clone();
                 req_body.max_tokens = Some(8192u16 - input_tokens as u16);
-                Self::extract_response(
+                Self::extract_chat_response(
                     self.request(chat_url, api.headers.clone(), rid, &req_body)
                         .await?,
                 )
@@ -542,7 +542,7 @@ impl OpenAI {
             Err(err) if err.code == 429 => {
                 sleep(Duration::from_secs(20)).await;
 
-                Self::extract_response(
+                Self::extract_chat_response(
                     self.request(chat_url, api.headers.clone(), rid, &req_body)
                         .await?,
                 )
@@ -552,44 +552,51 @@ impl OpenAI {
         }
     }
 
-    async fn extract_response(res: Response) -> Result<CreateChatCompletionResponse, HTTPError> {
-        let status = res.status().as_u16();
+    async fn extract_chat_response(
+        res: Response,
+    ) -> Result<CreateChatCompletionResponse, HTTPError> {
+        let mut status = res.status().as_u16();
         let headers = res.headers().clone();
         let body = res.text().await.map_err(HTTPError::with_500)?;
 
-        if status == 200 {
-            let rt = serde_json::from_str::<CreateChatCompletionResponse>(&body)
-                .map_err(HTTPError::with_500)?;
-            if !rt.choices.is_empty() {
-                let choice = &rt.choices[0];
-                match choice.finish_reason.as_ref().map_or("stop", |s| s.as_str()) {
-                    "stop" => {
-                        return Ok(rt);
-                    }
+        if status == 400 && body.contains("context_length_exceeded") {
+            status = 422
+        }
 
-                    "content_filter" => {
-                        return Err(HTTPError {
-                            code: 451,
-                            message: body,
-                            data: Some(headers_to_json(&headers)),
-                        });
-                    }
+        match status {
+            200 => {
+                let rt = serde_json::from_str::<CreateChatCompletionResponse>(&body)
+                    .map_err(HTTPError::with_500)?;
+                if !rt.choices.is_empty() {
+                    let choice = &rt.choices[0];
+                    match choice.finish_reason.as_ref().map_or("stop", |s| s.as_str()) {
+                        "stop" => {
+                            return Ok(rt);
+                        }
 
-                    _ => {}
+                        "content_filter" => {
+                            return Err(HTTPError {
+                                code: 451,
+                                message: body,
+                                data: Some(headers_to_json(&headers)),
+                            });
+                        }
+
+                        _ => {}
+                    }
                 }
-            }
 
-            Err(HTTPError {
-                code: 422,
-                message: body,
-                data: Some(headers_to_json(&headers)),
-            })
-        } else {
-            Err(HTTPError {
+                Err(HTTPError {
+                    code: 422,
+                    message: body,
+                    data: Some(headers_to_json(&headers)),
+                })
+            }
+            status => Err(HTTPError {
                 code: status,
                 message: body,
                 data: Some(headers_to_json(&headers)),
-            })
+            }),
         }
     }
 
@@ -640,56 +647,37 @@ impl OpenAI {
             req_body.user = Some(user.to_string())
         }
 
-        let mut res = self
+        let res = self
             .request(api.chat_url.clone(), api.headers.clone(), rid, &req_body)
             .await?;
 
-        // retry
-        if res.status() == 429 {
-            sleep(Duration::from_secs(30)).await;
-
-            res = self
-                .request(api.chat_url.clone(), api.headers.clone(), rid, &req_body)
-                .await?;
-        }
-
-        let status = res.status().as_u16();
-        let headers = res.headers().clone();
-        let body = res.text().await.map_err(HTTPError::with_500)?;
-
-        if status == 200 {
-            let rt = serde_json::from_str::<CreateChatCompletionResponse>(&body)
-                .map_err(HTTPError::with_500)?;
-            if !rt.choices.is_empty() {
-                let choice = &rt.choices[0];
-                match choice.finish_reason.as_ref().map_or("stop", |s| s.as_str()) {
-                    "stop" => {
-                        return Ok(rt);
-                    }
-
-                    "content_filter" => {
-                        return Err(HTTPError {
-                            code: 451,
-                            message: body,
-                            data: Some(headers_to_json(&headers)),
-                        });
-                    }
-
-                    _ => {}
-                }
+        match Self::extract_chat_response(res).await {
+            Ok(rt) => Ok(rt),
+            Err(err) if err.code == 422 => {
+                // only for gpt-3.5, run with gpt-3.5-16k
+                // should not happen for gpt-4
+                req_body.max_tokens = Some(1000u16);
+                Self::extract_chat_response(
+                    self.request(
+                        api.large_chat_url.clone(),
+                        api.headers.clone(),
+                        rid,
+                        &req_body,
+                    )
+                    .await?,
+                )
+                .await
             }
+            Err(err) if err.code == 429 => {
+                sleep(Duration::from_secs(20)).await;
 
-            Err(HTTPError {
-                code: 422,
-                message: body,
-                data: Some(headers_to_json(&headers)),
-            })
-        } else {
-            Err(HTTPError {
-                code: status,
-                message: body,
-                data: Some(headers_to_json(&headers)),
-            })
+                Self::extract_chat_response(
+                    self.request(api.chat_url.clone(), api.headers.clone(), rid, &req_body)
+                        .await?,
+                )
+                .await
+            }
+            Err(err) => Err(err),
         }
     }
 
