@@ -30,25 +30,25 @@ pub struct Qdrant {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct AzureAI {
-    pub disable: bool,
+    pub agent_endpoint: String,
     pub resource_name: String,
     pub api_key: String,
     pub api_version: String,
+    pub embedding_model: String,
     pub chat_model: String,
     pub large_chat_model: String,
-    pub embedding_model: String,
+    pub gpt4_chat_model: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct OpenAI {
-    pub disable: bool,
+    pub agent_endpoint: String,
     pub api_key: String,
     pub org_id: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Agent {
-    pub agent_host: String,
     pub client_pem_file: String,
     pub client_root_cert_file: String,
 }
@@ -57,7 +57,7 @@ pub struct Agent {
 pub struct AI {
     pub agent: Agent,
     pub openai: OpenAI,
-    pub azureai: AzureAI,
+    pub azureais: Vec<AzureAI>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

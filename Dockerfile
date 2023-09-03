@@ -57,7 +57,7 @@ RUN xx-cargo build --release \
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
-    && apt-get install -y ca-certificates tzdata curl openssl \
+    && apt-get install -y ca-certificates tzdata ping curl openssl \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 

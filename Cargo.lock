@@ -1300,7 +1300,7 @@ checksum = "af150ab688ff2122fcef229be89cb50dd66af9e01a4ff320cc137eecc9bacc38"
 
 [[package]]
 name = "jarvis"
-version = "0.10.6"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "async-openai",
@@ -1321,6 +1321,7 @@ dependencies = [
  "log",
  "mime",
  "qdrant-client",
+ "rand",
  "reqwest",
  "scylla",
  "scylla-orm",
@@ -1329,8 +1330,6 @@ dependencies = [
  "serde_json",
  "sha3",
  "structured-logger",
- "strum 0.25.0",
- "strum_macros 0.25.2",
  "tiktoken-rs",
  "tokio",
  "tower",
@@ -3422,12 +3421,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "063e6045c0e62079840579a7e47a355ae92f60eb74daaf156fb1e84ba164e63f"
 
 [[package]]
-name = "strum"
-version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "290d54ea6f91c969195bdbcd7442c8c2a2ba87da8bf60a7ee86a235d4bc1e125"
-
-[[package]]
 name = "strum_macros"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3451,19 +3444,6 @@ dependencies = [
  "quote",
  "rustversion",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.25.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad8d03b598d3d0fff69bf533ee3ef19b8eeb342729596df84bcc7e1f96ec4059"
-dependencies = [
- "heck 0.4.1",
- "proc-macro2",
- "quote",
- "rustversion",
- "syn 2.0.29",
 ]
 
 [[package]]

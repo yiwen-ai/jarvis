@@ -27,20 +27,20 @@ url = "http://127.0.0.1:6334"
 api_key = ""
 
 [ai.agent]
-agent_host = ""
 client_pem_file = ""
 client_root_cert_file = ""
 
-[ai.azureai]
-disable = false
+[ai.openai]
+agent_endpoint = ""
+api_key = ""
+org_id = ""
+
+[[ai.azureais]]
+agent_endpoint = ""
 resource_name = "yiwen"
 api_key = ""
 api_version = "2023-05-15"
 chat_model = "gpt-35-turbo"
 large_chat_model = "gpt-35-16k"
 embedding_model = "embedding-ada-002"
-
-[ai.openai]
-disable = false
-api_key = ""
-org_id = ""
+gpt4_chat_model = "gpt-4"

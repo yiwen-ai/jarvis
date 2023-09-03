@@ -100,7 +100,7 @@ impl Translating {
         db: &scylladb::ScyllaDB,
         cols: ColumnsMap,
     ) -> anyhow::Result<bool> {
-        let valid_fields = vec![
+        let valid_fields = [
             "model",
             "progress",
             "updated_at",
