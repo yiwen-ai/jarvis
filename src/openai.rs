@@ -35,6 +35,8 @@ const MODEL_GPT_3_5_16K: &str = "gpt-3.5-turbo-16k"; // 16384
 const MODEL_GPT_3_5: &str = "gpt-3.5-turbo"; // 4096
 const MODEL_GPT_4: &str = "gpt-4"; // 8192
 
+const X_HOST: &str = "x-forwarded-host";
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum AIModel {
     GPT3_5,
@@ -57,8 +59,8 @@ impl AIModel {
     // return (recommend, high)
     pub fn translating_segment_tokens(&self) -> (usize, usize) {
         match self {
-            AIModel::GPT3_5 => (1400, 1600),
-            AIModel::GPT4 => (2800, 3200),
+            AIModel::GPT3_5 => (1000, 1300),
+            AIModel::GPT4 => (2000, 2600),
         }
     }
 
@@ -139,7 +141,7 @@ impl OpenAI {
             format!("Bearer {}", opts.openai.api_key).parse().unwrap(),
         );
         openai_headers.insert("OpenAI-Organization", opts.openai.org_id.parse().unwrap());
-        openai_headers.insert("x-forwarded-host", "api.openai.com".parse().unwrap());
+        openai_headers.insert(X_HOST, "api.openai.com".parse().unwrap());
         let agent = reqwest::Url::parse(&opts.openai.agent_endpoint).unwrap();
 
         let mut openai = Self {
@@ -158,7 +160,7 @@ impl OpenAI {
             let mut azure_headers = header::HeaderMap::with_capacity(2);
             azure_headers.insert("api-key", cfg.api_key.parse().unwrap());
             azure_headers.insert(
-                "x-forwarded-host",
+                X_HOST,
                 format!("{}.openai.azure.com", cfg.resource_name)
                     .parse()
                     .unwrap(),
@@ -476,6 +478,14 @@ impl OpenAI {
             ("input_tokens", input_tokens.into()),
             ("max_tokens", req_body.max_tokens.into()),
             ("model", model_name.clone().into()),
+            (
+                "host",
+                headers
+                    .get(X_HOST)
+                    .map(|v| v.to_str().unwrap())
+                    .unwrap_or_default()
+                    .into(),
+            ),
         ])
         .await;
 
@@ -497,8 +507,12 @@ impl OpenAI {
                 (api_url, headers) = self.get_params(&model_name, rand_index);
                 req_body.max_tokens = Some(8192u16 - input_tokens);
                 req_body.model = model_name.clone();
-                ctx.set("retry_max_tokens", req_body.max_tokens.into())
-                    .await;
+
+                ctx.set_kvs(vec![
+                    ("retry_max_tokens", req_body.max_tokens.into()),
+                    ("model", model_name.clone().into()),
+                ])
+                .await;
                 Self::check_chat_response(
                     self.request(ctx, api_url.clone(), headers.clone(), &req_body)
                         .await?,
@@ -509,6 +523,15 @@ impl OpenAI {
                     .await;
                 rand_index += 1;
                 (api_url, headers) = self.get_params(&model_name, rand_index);
+                ctx.set(
+                    "host_429",
+                    headers
+                        .get(X_HOST)
+                        .map(|v| v.to_str().unwrap())
+                        .unwrap_or_default()
+                        .into(),
+                )
+                .await;
                 Self::check_chat_response(
                     self.request(ctx, api_url.clone(), headers.clone(), &req_body)
                         .await?,
@@ -573,6 +596,14 @@ impl OpenAI {
             ("input_tokens", input_tokens.into()),
             ("max_tokens", req_body.max_tokens.into()),
             ("model", model_name.clone().into()),
+            (
+                "host",
+                headers
+                    .get(X_HOST)
+                    .map(|v| v.to_str().unwrap())
+                    .unwrap_or_default()
+                    .into(),
+            ),
         ])
         .await;
 
@@ -587,6 +618,15 @@ impl OpenAI {
                     .await;
                 rand_index += 1;
                 (api_url, headers) = self.get_params(&model_name, rand_index);
+                ctx.set(
+                    "host_429",
+                    headers
+                        .get(X_HOST)
+                        .map(|v| v.to_str().unwrap())
+                        .unwrap_or_default()
+                        .into(),
+                )
+                .await;
                 Self::check_chat_response(
                     self.request(ctx, api_url.clone(), headers.clone(), &req_body)
                         .await?,
@@ -656,6 +696,16 @@ impl OpenAI {
             req_body.user = Some(ctx.user.to_string())
         }
 
+        ctx.set(
+            "host",
+            headers
+                .get(X_HOST)
+                .map(|v| v.to_str().unwrap())
+                .unwrap_or_default()
+                .into(),
+        )
+        .await;
+
         let res: Result<CreateEmbeddingResponse, HTTPError> = self
             .request(ctx, api_url.clone(), headers.clone(), &req_body)
             .await;
@@ -667,6 +717,15 @@ impl OpenAI {
                     .await;
                 rand_index += 1;
                 (api_url, headers) = self.get_params(&model_name, rand_index);
+                ctx.set(
+                    "host_429",
+                    headers
+                        .get(X_HOST)
+                        .map(|v| v.to_str().unwrap())
+                        .unwrap_or_default()
+                        .into(),
+                )
+                .await;
                 self.request(ctx, api_url.clone(), headers.clone(), &req_body)
                     .await
             }
