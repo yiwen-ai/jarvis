@@ -290,6 +290,7 @@ async fn embedding(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
             log::error!(target: "embedding",
                 action = "call_openai",
                 rid = ctx.rid,
+                cid = te.cid.to_string(),
                 elapsed = ai_elapsed,
                 kv = log::as_serde!(kv);
                 "{}", err.to_string(),
@@ -303,6 +304,7 @@ async fn embedding(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
         log::info!(target: "embedding",
             action = "call_openai",
             rid = ctx.rid,
+            cid = te.cid.to_string(),
             elapsed = ai_elapsed,
             tokens = used_tokens,
             total_elapsed = start.elapsed().as_millis(),
@@ -320,7 +322,8 @@ async fn embedding(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
             if let Err(err) = ciborium::into_writer(&unit.content, &mut doc.content) {
                 log::error!(target: "embedding",
                     action = "to_cbor",
-                    rid = ctx.rid;
+                    rid = ctx.rid,
+                    cid = te.cid.to_string();
                     "{}", err,
                 );
                 continue;
@@ -333,6 +336,7 @@ async fn embedding(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
                     log::error!(target: "embedding",
                         action = "to_scylla",
                         rid = ctx.rid,
+                        cid = te.cid.to_string(),
                         ids = log::as_serde!(unit.ids()),
                         elapsed = scylla_elapsed;
                         "{}", err,
@@ -353,6 +357,7 @@ async fn embedding(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
                             log::info!(target: "qdrant",
                                 action = "to_qdrant",
                                 rid = ctx.rid,
+                                cid = te.cid.to_string(),
                                 elapsed = ctx.start.elapsed().as_millis() as u64 - scylla_elapsed - unit_elapsed;
                                 "",
                             )
@@ -361,6 +366,7 @@ async fn embedding(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
                             log::error!(target: "qdrant",
                                 action = "to_qdrant",
                                 rid = ctx.rid,
+                                cid = te.cid.to_string(),
                                 elapsed = ctx.start.elapsed().as_millis() as u64- scylla_elapsed- unit_elapsed;
                                 "{}", err,
                             )
@@ -374,6 +380,7 @@ async fn embedding(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
     log::info!(target: "embedding",
         action = "finish_job",
         rid = rid,
+        cid = te.cid.to_string(),
         elapsed = start.elapsed().as_millis() as u64,
         pieces = pieces,
         total_tokens = total_tokens;

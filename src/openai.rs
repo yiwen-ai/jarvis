@@ -9,6 +9,7 @@ use reqwest::{header, Client, ClientBuilder, Identity, Response};
 use serde::{de::DeserializeOwned, Serialize};
 use std::path::Path;
 use std::{str::FromStr, string::ToString};
+use tiktoken_rs::{num_tokens_from_messages, ChatCompletionRequestMessage};
 use tokio::time::{sleep, Duration};
 
 use crate::conf::AI;
@@ -30,6 +31,10 @@ static X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 const AI_MODEL_GPT_3_5: &str = "gpt-3.5"; // gpt-35-turbo, 4096
 const AI_MODEL_GPT_4: &str = "gpt-4"; // 8192
 
+const MODEL_GPT_3_5_16K: &str = "gpt-3.5-turbo-16k"; // 16384
+const MODEL_GPT_3_5: &str = "gpt-3.5-turbo"; // 4096
+const MODEL_GPT_4: &str = "gpt-t"; // 8192
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum AIModel {
     GPT3_5,
@@ -44,8 +49,8 @@ pub enum AIModel {
 impl AIModel {
     pub fn openai_name(&self) -> String {
         match self {
-            AIModel::GPT3_5 => "gpt-3.5-turbo".to_string(),
-            AIModel::GPT4 => "gpt-4".to_string(),
+            AIModel::GPT3_5 => MODEL_GPT_3_5.to_string(),
+            AIModel::GPT4 => MODEL_GPT_4.to_string(),
         }
     }
 
@@ -393,22 +398,22 @@ impl OpenAI {
                 .build().map_err(HTTPError::with_500)?,
         ];
 
-        let data = serde_json::to_string(&messages).map_err(HTTPError::with_500)?;
-        let input_tokens = tokens_len(&data) + 5;
-        let (max_tokens, model) = match model {
-            AIModel::GPT3_5 => (
-                AIModel::GPT3_5.max_tokens() - input_tokens,
-                AIModel::GPT3_5.openai_name(),
-            ),
-            AIModel::GPT4 => (
-                AIModel::GPT4.max_tokens() - input_tokens,
-                AIModel::GPT4.openai_name(),
-            ),
-        };
+        let prompt_messages: Vec<ChatCompletionRequestMessage> = messages
+            .iter()
+            .map(|m| ChatCompletionRequestMessage {
+                role: m.role.to_string(),
+                content: m.content.clone(),
+                name: None,
+                function_call: None,
+            })
+            .collect();
+
+        let input_tokens =
+            num_tokens_from_messages(&model.openai_name(), &prompt_messages).unwrap() as u16;
 
         let mut req_body = CreateChatCompletionRequestArgs::default()
-            .max_tokens(max_tokens as u16)
-            .model(model)
+            .max_tokens(model.max_tokens() as u16 - input_tokens)
+            .model(model.openai_name())
             .temperature(0f32)
             .messages(messages)
             .build()
@@ -418,11 +423,11 @@ impl OpenAI {
         }
 
         let mut chat_url = api.chat_url.clone();
-        if max_tokens < (input_tokens as f32 * 1.1) as usize {
+        if req_body.max_tokens.unwrap() < (input_tokens as f32 * 1.2) as u16 {
             // only for gpt-3.5, run with gpt-3.5-16k
             // should not happen for gpt-4
             chat_url = api.large_chat_url.clone();
-            req_body.max_tokens = Some(8192u16 - input_tokens as u16);
+            req_body.max_tokens = Some(8192u16 - input_tokens);
         }
 
         ctx.set_kvs(vec![
@@ -440,6 +445,11 @@ impl OpenAI {
             Err(err) if err.code == 422 => {
                 // only for gpt-3.5, run with gpt-3.5-16k
                 // should not happen for gpt-4
+                if input_tokens * 3 <= req_body.max_tokens.unwrap() {
+                    // some language unsupported.
+                    return Err(err);
+                }
+
                 chat_url = api.large_chat_url.clone();
                 req_body.max_tokens = Some(8192u16 - input_tokens as u16);
                 ctx.set("retry_max_tokens", req_body.max_tokens.into())
@@ -451,7 +461,7 @@ impl OpenAI {
             }
             Err(err) if err.code == 429 => {
                 sleep(Duration::from_secs(20)).await;
-                ctx.set("retry_by_limited", api.chat_url.to_string().into())
+                ctx.set("retry_by_limited", chat_url.to_string().into())
                     .await;
                 Self::check_chat_response(
                     self.request(ctx, chat_url, api.headers.clone(), &req_body)
@@ -485,6 +495,7 @@ impl OpenAI {
             });
         }
 
+        let model = AIModel::GPT3_5;
         let messages = vec![
             ChatCompletionRequestMessageArgs::default()
                 .role(Role::System)
@@ -496,18 +507,33 @@ impl OpenAI {
                 .build().map_err(HTTPError::with_500)?,
         ];
 
-        let data = serde_json::to_string(&messages).map_err(HTTPError::with_500)?;
-        let input_tokens = tokens_len(&data) + 5;
+        let prompt_messages: Vec<ChatCompletionRequestMessage> = messages
+            .iter()
+            .map(|m| ChatCompletionRequestMessage {
+                role: m.role.to_string(),
+                content: m.content.clone(),
+                name: None,
+                function_call: None,
+            })
+            .collect();
+
+        let input_tokens =
+            num_tokens_from_messages(&model.openai_name(), &prompt_messages).unwrap() as u16;
 
         let mut req_body = CreateChatCompletionRequestArgs::default()
-            .max_tokens((AIModel::GPT3_5.max_tokens() - input_tokens) as u16)
+            .max_tokens(800u16)
             .temperature(0f32)
-            .model(AIModel::GPT3_5.openai_name())
+            .model(model.openai_name())
             .messages(messages)
             .build()
             .map_err(HTTPError::with_500)?;
         if !ctx.user.is_zero() {
             req_body.user = Some(ctx.user.to_string())
+        }
+
+        let mut chat_url = api.chat_url.clone();
+        if (model.max_tokens() as u16 - input_tokens) < 800 {
+            chat_url = api.large_chat_url.clone();
         }
 
         ctx.set_kvs(vec![
@@ -517,33 +543,17 @@ impl OpenAI {
         .await;
 
         let res = self
-            .request(ctx, api.chat_url.clone(), api.headers.clone(), &req_body)
+            .request(ctx, chat_url.clone(), api.headers.clone(), &req_body)
             .await?;
 
         match Self::check_chat_response(res) {
             Ok(rt) => Ok(rt),
-            Err(err) if err.code == 422 => {
-                // only for gpt-3.5, run with gpt-3.5-16k
-                // should not happen for gpt-4
-                req_body.max_tokens = Some(1000u16);
-                ctx.set("retry_max_tokens", req_body.max_tokens.into())
-                    .await;
-                Self::check_chat_response(
-                    self.request(
-                        ctx,
-                        api.large_chat_url.clone(),
-                        api.headers.clone(),
-                        &req_body,
-                    )
-                    .await?,
-                )
-            }
             Err(err) if err.code == 429 => {
                 sleep(Duration::from_secs(20)).await;
-                ctx.set("retry_by_limited", api.chat_url.to_string().into())
+                ctx.set("retry_by_limited", chat_url.to_string().into())
                     .await;
                 Self::check_chat_response(
-                    self.request(ctx, api.chat_url.clone(), api.headers.clone(), &req_body)
+                    self.request(ctx, chat_url.clone(), api.headers.clone(), &req_body)
                         .await?,
                 )
             }

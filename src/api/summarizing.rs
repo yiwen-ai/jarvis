@@ -212,6 +212,8 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
                 log::error!(target: "summarizing",
                     action = "call_openai",
                     rid = ctx.rid,
+                    cid = te.cid.to_string(),
+                    language = te.language.to_639_3().to_string(),
                     elapsed = ai_elapsed,
                     kv = log::as_serde!(kv);
                     "{}", err.to_string(),
@@ -234,6 +236,7 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
             log::info!(target: "summarizing",
                 action = "call_openai",
                 rid = ctx.rid,
+                cid = te.cid.to_string(),
                 elapsed = ai_elapsed,
                 tokens = used_tokens,
                 total_elapsed = start.elapsed().as_millis(),
@@ -258,6 +261,7 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
             log::error!(target: "summarizing",
                 action = "to_scylla",
                 rid = &rid,
+                cid = te.cid.to_string(),
                 elapsed = start.elapsed().as_millis() as u64 - elapsed,
                 summary_length = output.len();
                 "{}", err,
@@ -267,6 +271,7 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
             log::info!(target: "summarizing",
                 action = "to_scylla",
                 rid = &rid,
+                cid = te.cid.to_string(),
                 elapsed = start.elapsed().as_millis() as u64 - elapsed,
                 summary_length = output.len();
                 "",
@@ -277,6 +282,7 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
     log::info!(target: "summarizing",
         action = "finish_job",
         rid = rid,
+        cid = te.cid.to_string(),
         elapsed = start.elapsed().as_millis() as u64,
         pieces = pieces,
         total_tokens = total_tokens;

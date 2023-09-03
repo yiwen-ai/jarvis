@@ -78,7 +78,7 @@ pub async fn get(
     })))
 }
 
-const IGNORE_LANGGUAGES: [&str; 5] = ["abk", "ava", "bak", "lim", "nya"];
+const IGNORE_LANGGUAGES: [&str; 6] = ["abk", "ava", "bak", "lim", "nya", "iii"];
 
 pub async fn list_languages(
     to: PackObject<()>,
@@ -321,6 +321,8 @@ async fn translate(
             log::error!(target: "translating",
                 action = "call_openai",
                 rid = ctx.rid,
+                cid = te.cid.to_string(),
+                language = te.language.to_639_3().to_string(),
                 elapsed = ai_elapsed,
                 kv = log::as_serde!(kv);
                 "{}", err.to_string(),
@@ -340,8 +342,9 @@ async fn translate(
         let _ = doc.upsert_fields(&app.scylla, cols).await;
 
         log::info!(target: "translating",
-            action = "processing",
+            action = "call_openai",
             rid = ctx.rid,
+            cid = te.cid.to_string(),
             elapsed = ai_elapsed,
             tokens = used_tokens,
             total_elapsed = start.elapsed().as_millis(),
@@ -362,7 +365,8 @@ async fn translate(
 
         log::warn!(target: "translating",
             action = "to_cbor",
-            rid = &rid;
+            rid = &rid,
+            cid = te.cid.to_string();
             "{}", err,
         );
         return;
@@ -382,6 +386,7 @@ async fn translate(
             log::error!(target: "translating",
                 action = "to_scylla",
                 rid = &rid,
+                cid = te.cid.to_string(),
                 elapsed = start.elapsed().as_millis() as u64 - elapsed,
                 content_length = content.len();
                 "{}", err,
@@ -391,6 +396,7 @@ async fn translate(
             log::info!(target: "translating",
                 action = "finish",
                 rid = &rid,
+                cid = te.cid.to_string(),
                 elapsed = start.elapsed().as_millis() as u64 - elapsed,
                 content_length = content.len();
                 "success",
@@ -401,6 +407,7 @@ async fn translate(
     log::info!(target: "translating",
         action = "finish_job",
         rid = rid,
+        cid = te.cid.to_string(),
         elapsed = start.elapsed().as_millis() as u64,
         pieces = pieces,
         total_tokens = total_tokens;
