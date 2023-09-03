@@ -6,14 +6,15 @@ use async_openai::types::{
 use axum::http::header::{HeaderMap, HeaderName};
 use libflate::gzip::Encoder;
 use reqwest::{header, Client, ClientBuilder, Identity, Response};
-use std::{path::Path, time::Instant};
+use serde::{de::DeserializeOwned, Serialize};
+use std::path::Path;
 use std::{str::FromStr, string::ToString};
 use tokio::time::{sleep, Duration};
 
 use crate::conf::AI;
 use crate::json_util::RawJSONArray;
 use crate::tokenizer::tokens_len;
-use axum_web::erring::HTTPError;
+use axum_web::{context::ReqContext, erring::HTTPError};
 
 const COMPRESS_MIN_LENGTH: usize = 256;
 
@@ -194,36 +195,32 @@ impl OpenAI {
 
     pub async fn translate(
         &self,
-        rid: &str,
-        user: &str,
+        ctx: &ReqContext,
         model: &AIModel,
         origin_lang: &str,
         target_lang: &str,
         input: &Vec<Vec<String>>,
     ) -> Result<(u32, Vec<Vec<String>>), HTTPError> {
-        let start = Instant::now();
         let text =
             serde_json::to_string(input).expect("OpenAI::translate serde_json::to_string error");
         let res = self
-            .do_translate(rid, user, model, origin_lang, target_lang, &text)
-            .await;
+            .do_translate(ctx, model, origin_lang, target_lang, &text)
+            .await?;
 
-        if let Err(err) = res {
-            log::error!(target: "translating",
-                action = "call_openai",
-                elapsed = start.elapsed().as_millis() as u64,
-                rid = rid,
-                user = user,
-                model = model.to_string(),
-                status = err.code,
-                headers = log::as_serde!(err.data.as_ref()),
-                input = text;
-                "{}", &err.message,
-            );
-            return Err(err);
-        }
+        let usage = res.usage.unwrap_or(Usage {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+        });
 
-        let res = res.unwrap();
+        ctx.set_kvs(vec![
+            ("elapsed", (ctx.start.elapsed().as_millis() as u64).into()),
+            ("prompt_tokens", usage.prompt_tokens.into()),
+            ("completion_tokens", usage.completion_tokens.into()),
+            ("total_tokens", usage.total_tokens.into()),
+        ])
+        .await;
+
         let choice = &res.choices[0];
         let oc = choice.message.content.clone().unwrap_or_default();
         let mut content = serde_json::from_str::<Vec<Vec<String>>>(&oc);
@@ -231,6 +228,7 @@ impl OpenAI {
             match RawJSONArray::new(&oc).fix_me() {
                 Ok(fixed) => {
                     content = serde_json::from_str::<Vec<Vec<String>>>(&fixed);
+                    ctx.set("json_fixed", content.is_ok().into()).await;
                     let mut need_record = false;
                     if content.is_ok() {
                         let list = content.as_ref().unwrap();
@@ -246,94 +244,52 @@ impl OpenAI {
                         }
                     }
 
-                    let output = if need_record { &oc } else { "" };
-                    log::info!(target: "translating",
-                        action = "parse_output",
-                        rid = rid,
-                        user = user,
-                        model = model.to_string(),
-                        fixed = content.is_ok(),
-                        input = text,
-                        output = output;
-                        "",
-                    );
+                    if need_record {
+                        ctx.set_kvs(vec![
+                            ("json_input", text.clone().into()),
+                            ("json_output", oc.clone().into()),
+                        ])
+                        .await;
+                    }
                 }
                 Err(er) => {
-                    log::error!(target: "translating",
-                        action = "parse_output",
-                        rid = rid,
-                        user = user,
-                        model = model.to_string(),
-                        fixed = false,
-                        input = text,
-                        output = choice.message.content;
-                        "{}", &er,
-                    );
+                    ctx.set_kvs(vec![
+                        ("json_fixed", false.into()),
+                        ("json_input", text.clone().into()),
+                        ("json_output", oc.clone().into()),
+                        ("json_error", er.into()),
+                    ])
+                    .await;
                 }
             }
         }
 
         if content.is_err() {
-            let err = content.err().unwrap();
-            log::error!(target: "translating",
-                action = "parse_output",
-                elapsed = start.elapsed().as_millis() as u64,
-                rid = rid,
-                user = user,
-                model = model.to_string(),
-                output = choice.message.content;
-                "{}", err,
-            );
+            let er = content.err().unwrap().to_string();
+            ctx.set_kvs(vec![
+                ("json_input", text.clone().into()),
+                ("json_output", oc.clone().into()),
+                ("json_error", er.clone().into()),
+            ])
+            .await;
 
-            return Err(HTTPError {
-                code: 500,
-                message: err.to_string(),
-                data: None,
-            });
+            return Err(HTTPError::new(500, er));
         };
-
-        let finish_reason = choice.finish_reason.as_ref().map_or("", |s| s.as_str());
-        let usage = res.usage.unwrap_or(Usage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        });
 
         let content = content.unwrap();
         if content.len() != input.len() {
-            let err = format!(
+            let er = format!(
                 "translated content array length not match, expected {}, got {}",
                 input.len(),
                 content.len()
             );
 
-            log::warn!(target: "translating",
-                action = "call_openai",
-                elapsed = start.elapsed().as_millis() as u64,
-                rid = rid,
-                user = user,
-                model = model.to_string(),
-                input = text,
-                output = choice.message.content,
-                prompt_tokens = usage.prompt_tokens,
-                completion_tokens = usage.completion_tokens,
-                total_tokens = usage.total_tokens,
-                finish_reason = finish_reason;
-                "{}", err,
-            );
-        } else {
-            log::info!(target: "translating",
-                action = "call_openai",
-                elapsed = start.elapsed().as_millis() as u64,
-                rid = rid,
-                user = user,
-                model = model.to_string(),
-                prompt_tokens = usage.prompt_tokens,
-                completion_tokens = usage.completion_tokens,
-                total_tokens = usage.total_tokens,
-                finish_reason = finish_reason;
-                "",
-            );
+            ctx.set_kvs(vec![
+                ("json_input", text.into()),
+                ("json_output", oc.into()),
+                ("json_error", er.into()),
+            ])
+            .await;
         }
 
         Ok((usage.total_tokens, content))
@@ -341,107 +297,53 @@ impl OpenAI {
 
     pub async fn summarize(
         &self,
-        rid: &str,
-        user: &str,
+        ctx: &ReqContext,
         lang: &str,
         input: &str,
     ) -> Result<(u32, String), HTTPError> {
-        let start = Instant::now();
-
-        let res = self.do_summarize(rid, user, lang, input).await;
-
-        if let Err(err) = res {
-            log::error!(target: "summarizing",
-                action = "call_openai",
-                elapsed = start.elapsed().as_millis() as u64,
-                rid = rid,
-                user = user,
-                status = err.code,
-                headers = log::as_serde!(err.data.as_ref()),
-                input = input;
-                "{}", &err.message,
-            );
-            return Err(err);
-        }
-
-        let res = res.unwrap();
-        let choice = &res.choices[0];
-        let content = choice.message.content.clone().unwrap_or_default();
-        let finish_reason = choice.finish_reason.as_ref().map_or("", |s| s.as_str());
+        let res = self.do_summarize(ctx, lang, input).await?;
         let usage = res.usage.unwrap_or(Usage {
             prompt_tokens: 0,
             completion_tokens: 0,
             total_tokens: 0,
         });
 
-        log::info!(target: "summarizing",
-            action = "call_openai",
-            elapsed = start.elapsed().as_millis() as u64,
-            rid = rid,
-            prompt_tokens = usage.prompt_tokens,
-            completion_tokens = usage.completion_tokens,
-            total_tokens = usage.total_tokens,
-            summary_length = content.len(),
-            finish_reason = finish_reason;
-            "",
-        );
+        ctx.set_kvs(vec![
+            ("elapsed", (ctx.start.elapsed().as_millis() as u64).into()),
+            ("prompt_tokens", usage.prompt_tokens.into()),
+            ("completion_tokens", usage.completion_tokens.into()),
+            ("total_tokens", usage.total_tokens.into()),
+        ])
+        .await;
 
+        let choice = &res.choices[0];
+        let content = choice.message.content.clone().unwrap_or_default();
         Ok((usage.total_tokens, content))
     }
 
     pub async fn embedding(
         &self,
-        rid: &str,
-        user: &str,
+        ctx: &ReqContext,
         input: &Vec<String>,
     ) -> Result<(u32, Vec<Vec<f32>>), HTTPError> {
-        let start = Instant::now();
-        let res = self.do_embedding(rid, user, input).await;
+        let res = self.do_embedding(ctx, input).await?;
+        ctx.set_kvs(vec![
+            ("elapsed", (ctx.start.elapsed().as_millis() as u64).into()),
+            ("prompt_tokens", res.usage.prompt_tokens.into()),
+            ("total_tokens", res.usage.total_tokens.into()),
+            ("embedding_size", res.data.len().into()),
+        ])
+        .await;
 
-        if let Err(err) = res {
-            log::error!(target: "embedding",
-                action = "call_openai",
-                elapsed = start.elapsed().as_millis() as u64,
-                rid = rid,
-                headers = log::as_serde!(err.data.as_ref());
-                "{}", &err.message,
-            );
-            return Err(err);
-        }
-
-        let res = res.unwrap();
         if input.len() != res.data.len() {
             let err = format!(
                 "embedding content array length not match, expected {}, got {}",
                 input.len(),
                 res.data.len()
             );
-            log::error!(target: "embedding",
-                action = "call_openai",
-                elapsed = start.elapsed().as_millis() as u64,
-                rid = rid,
-                prompt_tokens = res.usage.prompt_tokens,
-                total_tokens = res.usage.total_tokens,
-                embedding_size = res.data.len();
-                "{}", err,
-            );
 
-            return Err(HTTPError {
-                code: 500,
-                message: err,
-                data: None,
-            });
+            return Err(HTTPError::new(500, err));
         }
-
-        log::info!(target: "embedding",
-            action = "call_openai",
-            elapsed = start.elapsed().as_millis() as u64,
-            rid = rid,
-            prompt_tokens = res.usage.prompt_tokens,
-            total_tokens = res.usage.total_tokens,
-            embedding_size = res.data.len();
-            "",
-        );
 
         Ok((
             res.usage.total_tokens,
@@ -452,8 +354,7 @@ impl OpenAI {
     // Max tokens: 4096 or 8192
     async fn do_translate(
         &self,
-        rid: &str,
-        user: &str,
+        ctx: &ReqContext,
         model: &AIModel,
         origin_lang: &str,
         target_lang: &str,
@@ -466,8 +367,10 @@ impl OpenAI {
         };
 
         let api: &APIParams = if self.azureai.disable || model == &AIModel::GPT4 {
+            ctx.set("ai", "openai".into()).await;
             &self.openai
         } else {
+            ctx.set("ai", "azure_openai".into()).await;
             &self.azureai
         };
 
@@ -510,8 +413,8 @@ impl OpenAI {
             .messages(messages)
             .build()
             .map_err(HTTPError::with_500)?;
-        if !user.is_empty() {
-            req_body.user = Some(user.to_string())
+        if !ctx.user.is_zero() {
+            req_body.user = Some(ctx.user.to_string())
         }
 
         let mut chat_url = api.chat_url.clone();
@@ -522,95 +425,55 @@ impl OpenAI {
             req_body.max_tokens = Some(8192u16 - input_tokens as u16);
         }
 
+        ctx.set_kvs(vec![
+            ("input_tokens", input_tokens.into()),
+            ("max_tokens", req_body.max_tokens.into()),
+        ])
+        .await;
+
         let res = self
-            .request(chat_url.clone(), api.headers.clone(), rid, &req_body)
+            .request(ctx, chat_url.clone(), api.headers.clone(), &req_body)
             .await?;
 
-        match Self::extract_chat_response(res).await {
+        match Self::check_chat_response(res) {
             Ok(rt) => Ok(rt),
             Err(err) if err.code == 422 => {
                 // only for gpt-3.5, run with gpt-3.5-16k
                 // should not happen for gpt-4
                 chat_url = api.large_chat_url.clone();
                 req_body.max_tokens = Some(8192u16 - input_tokens as u16);
-                Self::extract_chat_response(
-                    self.request(chat_url, api.headers.clone(), rid, &req_body)
+                ctx.set("retry_max_tokens", req_body.max_tokens.into())
+                    .await;
+                Self::check_chat_response(
+                    self.request(ctx, chat_url, api.headers.clone(), &req_body)
                         .await?,
                 )
-                .await
             }
             Err(err) if err.code == 429 => {
                 sleep(Duration::from_secs(20)).await;
-
-                Self::extract_chat_response(
-                    self.request(chat_url, api.headers.clone(), rid, &req_body)
+                ctx.set("retry_by_limited", api.chat_url.to_string().into())
+                    .await;
+                Self::check_chat_response(
+                    self.request(ctx, chat_url, api.headers.clone(), &req_body)
                         .await?,
                 )
-                .await
             }
             Err(err) => Err(err),
-        }
-    }
-
-    async fn extract_chat_response(
-        res: Response,
-    ) -> Result<CreateChatCompletionResponse, HTTPError> {
-        let mut status = res.status().as_u16();
-        let headers = res.headers().clone();
-        let body = res.text().await.map_err(HTTPError::with_500)?;
-
-        if status == 400 && body.contains("context_length_exceeded") {
-            status = 422
-        }
-
-        match status {
-            200 => {
-                let rt = serde_json::from_str::<CreateChatCompletionResponse>(&body)
-                    .map_err(HTTPError::with_500)?;
-                if !rt.choices.is_empty() {
-                    let choice = &rt.choices[0];
-                    match choice.finish_reason.as_ref().map_or("stop", |s| s.as_str()) {
-                        "stop" => {
-                            return Ok(rt);
-                        }
-
-                        "content_filter" => {
-                            return Err(HTTPError {
-                                code: 451,
-                                message: body,
-                                data: Some(headers_to_json(&headers)),
-                            });
-                        }
-
-                        _ => {}
-                    }
-                }
-
-                Err(HTTPError {
-                    code: 422,
-                    message: body,
-                    data: Some(headers_to_json(&headers)),
-                })
-            }
-            status => Err(HTTPError {
-                code: status,
-                message: body,
-                data: Some(headers_to_json(&headers)),
-            }),
         }
     }
 
     // Max tokens: 4096
     async fn do_summarize(
         &self,
-        rid: &str,
-        user: &str,
+        ctx: &ReqContext,
         language: &str,
         text: &str,
     ) -> Result<CreateChatCompletionResponse, HTTPError> {
         let api: &APIParams = if self.azureai.disable {
+            ctx.set("ai", "openai".into()).await;
             &self.openai
         } else {
+            ctx.set("ai", "azure_openai".into()).await;
             &self.azureai
         };
 
@@ -643,50 +506,96 @@ impl OpenAI {
             .messages(messages)
             .build()
             .map_err(HTTPError::with_500)?;
-        if !user.is_empty() {
-            req_body.user = Some(user.to_string())
+        if !ctx.user.is_zero() {
+            req_body.user = Some(ctx.user.to_string())
         }
 
+        ctx.set_kvs(vec![
+            ("input_tokens", input_tokens.into()),
+            ("max_tokens", req_body.max_tokens.into()),
+        ])
+        .await;
+
         let res = self
-            .request(api.chat_url.clone(), api.headers.clone(), rid, &req_body)
+            .request(ctx, api.chat_url.clone(), api.headers.clone(), &req_body)
             .await?;
 
-        match Self::extract_chat_response(res).await {
+        match Self::check_chat_response(res) {
             Ok(rt) => Ok(rt),
             Err(err) if err.code == 422 => {
                 // only for gpt-3.5, run with gpt-3.5-16k
                 // should not happen for gpt-4
                 req_body.max_tokens = Some(1000u16);
-                Self::extract_chat_response(
+                ctx.set("retry_max_tokens", req_body.max_tokens.into())
+                    .await;
+                Self::check_chat_response(
                     self.request(
+                        ctx,
                         api.large_chat_url.clone(),
                         api.headers.clone(),
-                        rid,
                         &req_body,
                     )
                     .await?,
                 )
-                .await
             }
             Err(err) if err.code == 429 => {
                 sleep(Duration::from_secs(20)).await;
-
-                Self::extract_chat_response(
-                    self.request(api.chat_url.clone(), api.headers.clone(), rid, &req_body)
+                ctx.set("retry_by_limited", api.chat_url.to_string().into())
+                    .await;
+                Self::check_chat_response(
+                    self.request(ctx, api.chat_url.clone(), api.headers.clone(), &req_body)
                         .await?,
                 )
-                .await
             }
             Err(err) => Err(err),
         }
+    }
+
+    fn check_chat_response(
+        rt: CreateChatCompletionResponse,
+    ) -> Result<CreateChatCompletionResponse, HTTPError> {
+        if rt.choices.len() != 1 {
+            let choice = &rt.choices[0];
+            match choice.finish_reason.as_ref().map_or("stop", |s| s.as_str()) {
+                "stop" => {
+                    return Ok(rt);
+                }
+
+                "content_filter" => {
+                    return Err(HTTPError::new(
+                        452,
+                        "Content was triggered the filtering model".to_string(),
+                    ));
+                }
+
+                "length" => {
+                    return Err(HTTPError::new(
+                        422,
+                        "Incomplete output due to max_tokens parameter".to_string(),
+                    ));
+                }
+
+                reason => {
+                    return Err(HTTPError::new(
+                        500,
+                        format!("Unknown finish reason: {}", reason),
+                    ));
+                }
+            }
+        }
+
+        Err(HTTPError {
+            code: 500,
+            message: format!("Unexpected choices: {}", rt.choices.len()),
+            data: None,
+        })
     }
 
     // https://learn.microsoft.com/en-us/azure/cognitive-services/openai/how-to/embeddings?tabs=console
     // Max tokens: 8191, text-embedding-ada-002
     async fn do_embedding(
         &self,
-        rid: &str,
-        user: &str,
+        ctx: &ReqContext,
         input: &Vec<String>, // max length: 16
     ) -> Result<CreateEmbeddingResponse, HTTPError> {
         let mut req_body = CreateEmbeddingRequestArgs::default()
@@ -694,13 +603,15 @@ impl OpenAI {
             .input(input)
             .build()
             .map_err(HTTPError::with_500)?;
-        if !user.is_empty() {
-            req_body.user = Some(user.to_string())
+        if !ctx.user.is_zero() {
+            req_body.user = Some(ctx.user.to_string())
         }
 
         let api: &APIParams = if self.azureai.disable {
+            ctx.set("ai", "openai".into()).await;
             &self.openai
         } else {
+            ctx.set("ai", "azure_openai".into()).await;
             &self.azureai
         };
 
@@ -712,86 +623,116 @@ impl OpenAI {
             });
         }
 
-        let mut res = self
+        let res: Result<CreateEmbeddingResponse, HTTPError> = self
             .request(
+                ctx,
                 api.embedding_url.clone(),
                 api.headers.clone(),
-                rid,
                 &req_body,
             )
-            .await?;
+            .await;
 
-        if res.status() == 429 {
-            sleep(Duration::from_secs(20)).await;
-
-            res = self
-                .request(
+        match res {
+            Ok(out) => Ok(out),
+            Err(err) if err.code == 429 => {
+                sleep(Duration::from_secs(20)).await;
+                ctx.set("retry_by_limited", api.chat_url.to_string().into())
+                    .await;
+                self.request(
+                    ctx,
                     api.embedding_url.clone(),
                     api.headers.clone(),
-                    rid,
                     &req_body,
                 )
-                .await?;
-        }
-
-        let status = res.status().as_u16();
-        let headers = res.headers().clone();
-        let body = res.text().await.map_err(HTTPError::with_500)?;
-
-        if status == 200 {
-            let rt = serde_json::from_str::<CreateEmbeddingResponse>(&body)
-                .map_err(HTTPError::with_500)?;
-            if !rt.data.is_empty() {
-                return Ok(rt);
+                .await
             }
-
-            Err(HTTPError {
-                code: 422,
-                message: body,
-                data: Some(headers_to_json(&headers)),
-            })
-        } else {
-            Err(HTTPError {
-                code: status,
-                message: body,
-                data: Some(headers_to_json(&headers)),
-            })
+            Err(err) => Err(err),
         }
     }
 
-    async fn request<T: serde::Serialize + ?Sized>(
+    async fn request<I, O>(
         &self,
+        ctx: &ReqContext,
         url: reqwest::Url,
         headers: header::HeaderMap,
-        rid: &str,
-        body: &T,
-    ) -> Result<Response, HTTPError> {
-        let data = serde_json::to_vec(body).map_err(HTTPError::with_500)?;
-        let req = self
-            .client
-            .post(url)
-            .headers(headers)
-            .header(&X_REQUEST_ID, rid);
+        body: &I,
+    ) -> Result<O, HTTPError>
+    where
+        I: Serialize + ?Sized,
+        O: DeserializeOwned,
+    {
+        let res: Result<Response, HTTPError> = {
+            let data = serde_json::to_vec(body).map_err(HTTPError::with_500)?;
+            ctx.set_kvs(vec![
+                ("url", url.to_string().into()),
+                ("body_length", data.len().into()),
+            ])
+            .await;
+            let req = self
+                .client
+                .post(url)
+                .headers(headers)
+                .header(&X_REQUEST_ID, ctx.rid.as_str());
 
-        let res = if self.use_agent && data.len() >= COMPRESS_MIN_LENGTH {
-            use std::io::Write;
-            let mut encoder = Encoder::new(Vec::new()).map_err(HTTPError::with_500)?;
-            encoder.write_all(&data).map_err(HTTPError::with_500)?;
-            let data = encoder
-                .finish()
-                .into_result()
-                .map_err(HTTPError::with_500)?;
+            let res = if self.use_agent && data.len() >= COMPRESS_MIN_LENGTH {
+                use std::io::Write;
+                let mut encoder = Encoder::new(Vec::new()).map_err(HTTPError::with_500)?;
+                encoder.write_all(&data).map_err(HTTPError::with_500)?;
+                let data = encoder
+                    .finish()
+                    .into_result()
+                    .map_err(HTTPError::with_500)?;
 
-            req.header("content-encoding", "gzip")
-                .body(data)
-                .send()
-                .await
-                .map_err(HTTPError::with_500)?
-        } else {
-            req.body(data).send().await.map_err(HTTPError::with_500)?
+                ctx.set("gzip_length", data.len().into()).await;
+                req.header("content-encoding", "gzip")
+                    .body(data)
+                    .send()
+                    .await
+                    .map_err(HTTPError::with_500)?
+            } else {
+                req.body(data).send().await.map_err(HTTPError::with_500)?
+            };
+
+            Ok(res)
         };
 
-        Ok(res)
+        match res {
+            Err(err) => {
+                ctx.set(
+                    "req_body",
+                    serde_json::to_string(body).unwrap_or_default().into(),
+                )
+                .await;
+                Err(err)
+            }
+            Ok(res) => {
+                if res.status().is_success() {
+                    let data = res.bytes().await.map_err(HTTPError::with_500)?;
+                    return serde_json::from_slice::<O>(&data).map_err(HTTPError::with_500);
+                }
+
+                let mut status = res.status().as_u16();
+                let headers = res.headers().clone();
+                let req_body = serde_json::to_string(body).unwrap_or_default();
+                let res_body = res.text().await.map_err(HTTPError::with_500)?;
+                if status == 400 {
+                    if res_body.contains("context_length_exceeded") {
+                        status = 422
+                    } else if res_body.contains("content_filter") {
+                        status = 451
+                    }
+                }
+
+                ctx.set_kvs(vec![
+                    ("req_body", req_body.into()),
+                    ("res_status", status.into()),
+                    ("res_headers", headers_to_json(&headers)),
+                ])
+                .await;
+
+                Err(HTTPError::new(status, res_body))
+            }
+        }
     }
 }
 

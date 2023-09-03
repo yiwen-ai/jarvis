@@ -86,8 +86,6 @@ pub async fn healthz(to: PackObject<()>, State(app): State<Arc<AppState>>) -> Pa
 }
 
 pub(crate) struct TEParams {
-    pub rid: String,
-    pub user: String,
     pub gid: xid::Id,
     pub cid: xid::Id,
     pub language: Language,

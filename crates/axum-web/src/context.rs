@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 pub use structured_logger::unix_ms;
 
+#[derive(Debug)]
 pub struct ReqContext {
     pub rid: String,   // from x-request-id header
     pub user: xid::Id, // from x-auth-user header
@@ -29,6 +30,13 @@ impl ReqContext {
             start: Instant::now(),
             kv: RwLock::new(BTreeMap::new()),
         }
+    }
+
+    pub async fn get_kv(&self) -> BTreeMap<String, Value> {
+        let kv = self.kv.read().await;
+        kv.clone()
+        // let mut res: BTreeMap<String, Value> = BTreeMap::with_capacity(kv.len());
+        // res
     }
 
     pub async fn set(&self, key: &str, value: Value) {

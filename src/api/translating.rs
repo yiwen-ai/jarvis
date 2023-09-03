@@ -249,9 +249,9 @@ pub async fn create(
 
     tokio::spawn(translate(
         app,
+        ctx.rid.clone(),
+        ctx.user,
         TEParams {
-            rid: ctx.rid.clone(),
-            user: ctx.user.to_string(),
             gid,
             cid,
             version: input.version as i16,
@@ -270,6 +270,8 @@ pub async fn create(
 
 async fn translate(
     app: Arc<AppState>,
+    rid: String,
+    user: xid::Id,
     te: TEParams,
     origin_language: Language,
     model: openai::AIModel,
@@ -277,6 +279,18 @@ async fn translate(
     let content = te.content.segment(&model, tokenizer::tokens_len);
     let pieces = content.len();
     let start = Instant::now();
+
+    log::info!(target: "translating",
+        action = "start_job",
+        rid = rid,
+        user = user.to_string(),
+        gid = te.gid.to_string(),
+        cid = te.cid.to_string(),
+        language = te.language.to_639_3().to_string(),
+        pieces = pieces;
+        "",
+    );
+
     let tokio_translating = app.translating.clone();
     let mut content_list: TEContentList = Vec::new();
     let mut total_tokens: usize = 0;
@@ -284,12 +298,11 @@ async fn translate(
 
     let mut progress = 0usize;
     for unit in content {
-        let unit_elapsed = start.elapsed().as_millis() as u64;
+        let ctx = ReqContext::new(&rid, user, 0);
         let res = app
             .ai
             .translate(
-                &te.rid,
-                &te.user,
+                &ctx,
                 &model,
                 origin_language.to_name(),
                 te.language.to_name(),
@@ -297,7 +310,8 @@ async fn translate(
             )
             .await;
 
-        let ai_elapsed = start.elapsed().as_millis() as u64 - unit_elapsed;
+        let ai_elapsed = ctx.start.elapsed().as_millis() as u64;
+        let kv = ctx.get_kv().await;
         if let Err(err) = res {
             let mut cols = ColumnsMap::with_capacity(2);
             cols.set_as("updated_at", &(unix_ms() as i64));
@@ -305,13 +319,10 @@ async fn translate(
             let _ = doc.upsert_fields(&app.scylla, cols).await;
 
             log::error!(target: "translating",
-                action = "processing",
-                rid = te.rid,
-                gid = te.gid.to_string(),
-                cid = te.cid.to_string(),
-                language = te.language.to_639_3().to_string(),
-                version = te.version,
-                elapsed = ai_elapsed;
+                action = "call_openai",
+                rid = ctx.rid,
+                elapsed = ai_elapsed,
+                kv = log::as_serde!(kv);
                 "{}", err.to_string(),
             );
             return;
@@ -330,15 +341,12 @@ async fn translate(
 
         log::info!(target: "translating",
             action = "processing",
-            rid = te.rid,
-            gid = te.gid.to_string(),
-            cid = te.cid.to_string(),
-            language = te.language.to_639_3().to_string(),
-            version = te.version,
+            rid = ctx.rid,
             elapsed = ai_elapsed,
             tokens = used_tokens,
             total_elapsed = start.elapsed().as_millis(),
-            total_tokens = total_tokens;
+            total_tokens = total_tokens,
+            kv = log::as_serde!(kv);
             "{}/{}", progress, pieces,
         );
     }
@@ -354,55 +362,50 @@ async fn translate(
 
         log::warn!(target: "translating",
             action = "to_cbor",
-            rid = te.rid,
-            gid = te.gid.to_string(),
-            cid = te.cid.to_string(),
-            language = te.language.to_639_3().to_string(),
-            version = te.version,
-            elapsed = start.elapsed().as_millis() as u64,
-            pieces = pieces;
+            rid = &rid;
             "{}", err,
         );
         return;
     }
 
     let mut cols = ColumnsMap::with_capacity(5);
+    let content = content.unwrap();
     cols.set_as("updated_at", &(unix_ms() as i64));
     cols.set_as("progress", &100i8);
     cols.set_as("tokens", &(total_tokens as i32));
-    cols.set_as("content", &content.unwrap());
+    cols.set_as("content", &content);
     cols.set_as("error", &"".to_string());
 
+    let elapsed = start.elapsed().as_millis() as u64;
     match doc.upsert_fields(&app.scylla, cols).await {
         Err(err) => {
             log::error!(target: "translating",
                 action = "to_scylla",
-                rid = te.rid,
-                gid = te.gid.to_string(),
-                cid = te.cid.to_string(),
-                language = te.language.to_639_3().to_string(),
-                version = te.version,
-                elapsed = start.elapsed().as_millis() as u64,
-                pieces = pieces,
-                total_tokens = total_tokens;
+                rid = &rid,
+                elapsed = start.elapsed().as_millis() as u64 - elapsed,
+                content_length = content.len();
                 "{}", err,
             );
         }
         Ok(_) => {
             log::info!(target: "translating",
                 action = "finish",
-                rid = te.rid,
-                gid = te.gid.to_string(),
-                cid = te.cid.to_string(),
-                language = te.language.to_639_3().to_string(),
-                version = te.version,
-                elapsed = start.elapsed().as_millis() as u64,
-                pieces = pieces,
-                total_tokens = total_tokens;
+                rid = &rid,
+                elapsed = start.elapsed().as_millis() as u64 - elapsed,
+                content_length = content.len();
                 "success",
             );
         }
     };
+
+    log::info!(target: "translating",
+        action = "finish_job",
+        rid = rid,
+        elapsed = start.elapsed().as_millis() as u64,
+        pieces = pieces,
+        total_tokens = total_tokens;
+        "",
+    );
 
     let _ = tokio_translating.as_str(); // avoid unused warning
 }

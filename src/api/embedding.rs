@@ -56,9 +56,10 @@ pub async fn search(
         return Ok(to.with(SuccessResponse::new(vec![])));
     }
 
+    let rctx = ctx.as_ref().clone();
     let embedding_res = app
         .ai
-        .embedding(&ctx.rid, &ctx.user.to_string(), &vec![q.clone()])
+        .embedding(rctx, &vec![q.clone()])
         .await
         .map_err(HTTPError::from)?;
 
@@ -235,9 +236,9 @@ pub async fn create(
     // start embedding in the background immediately.
     tokio::spawn(embedding(
         app,
+        ctx.rid.clone(),
+        ctx.user,
         TEParams {
-            rid: ctx.rid.clone(),
-            user: ctx.user.to_string(),
             gid,
             cid,
             language,
@@ -252,7 +253,7 @@ pub async fn create(
     })))
 }
 
-async fn embedding(app: Arc<AppState>, te: TEParams) {
+async fn embedding(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams) {
     let content = te.content.segment_for_embedding(tokenizer::tokens_len);
     if content.is_empty() {
         return;
@@ -260,27 +261,37 @@ async fn embedding(app: Arc<AppState>, te: TEParams) {
 
     let pieces = content.len();
     let start = Instant::now();
+
+    log::info!(target: "embedding",
+        action = "start_job",
+        rid = rid,
+        user = user.to_string(),
+        gid = te.gid.to_string(),
+        cid = te.cid.to_string(),
+        language = te.language.to_639_3().to_string(),
+        pieces = pieces;
+        "",
+    );
+
     let tokio_embedding = app.embedding.clone();
     let mut total_tokens: i32 = 0;
-
     let mut progress = 0usize;
     for unit_group in content {
-        let unit_elapsed = start.elapsed().as_millis() as u64;
+        let ctx = ReqContext::new(&rid, user, 0);
         let embedding_input: Vec<String> = unit_group
             .iter()
             .map(|unit| unit.to_embedding_string())
             .collect();
-        let res = app.ai.embedding(&te.rid, &te.user, &embedding_input).await;
 
-        let ai_elapsed = start.elapsed().as_millis() as u64 - unit_elapsed;
+        let res = app.ai.embedding(&ctx, &embedding_input).await;
+        let ai_elapsed = ctx.start.elapsed().as_millis() as u64;
+        let kv = ctx.get_kv().await;
         if let Err(err) = res {
             log::error!(target: "embedding",
-                action = "processing",
-                rid = te.rid,
-                gid = te.gid.to_string(),
-                cid = te.cid.to_string(),
-                language = te.language.to_639_3().to_string(),
-                elapsed = ai_elapsed;
+                action = "call_openai",
+                rid = ctx.rid,
+                elapsed = ai_elapsed,
+                kv = log::as_serde!(kv);
                 "{}", err.to_string(),
             );
             continue;
@@ -290,49 +301,39 @@ async fn embedding(app: Arc<AppState>, te: TEParams) {
         let (used_tokens, embeddings) = res.unwrap();
         total_tokens += used_tokens as i32;
         log::info!(target: "embedding",
-            action = "processing",
-            rid = te.rid,
-            gid = te.gid.to_string(),
-            cid = te.cid.to_string(),
-            language = te.language.to_639_3().to_string(),
+            action = "call_openai",
+            rid = ctx.rid,
             elapsed = ai_elapsed,
             tokens = used_tokens,
             total_elapsed = start.elapsed().as_millis(),
-            total_tokens = total_tokens;
+            total_tokens = total_tokens,
+            kv = log::as_serde!(kv);
             "{}/{}", progress, pieces,
         );
 
         for (i, unit) in unit_group.iter().enumerate() {
+            let unit_elapsed = ctx.start.elapsed().as_millis() as u64;
             let mut doc = db::Embedding::from(te.cid, te.language, unit.ids().join(","));
             doc.gid = te.gid;
             doc.version = te.version;
 
             if let Err(err) = ciborium::into_writer(&unit.content, &mut doc.content) {
-                log::warn!(target: "embedding",
+                log::error!(target: "embedding",
                     action = "to_cbor",
-                    rid = te.rid,
-                    gid = te.gid.to_string(),
-                    cid = te.cid.to_string(),
-                    language = te.language.to_639_3().to_string(),
-                    elapsed = ai_elapsed;
+                    rid = ctx.rid;
                     "{}", err,
                 );
                 continue;
             }
 
             let res = doc.save(&app.scylla).await;
-            let scylla_elapsed = start.elapsed().as_millis() as u64 - ai_elapsed - unit_elapsed;
+            let scylla_elapsed = ctx.start.elapsed().as_millis() as u64 - unit_elapsed;
             match res {
                 Err(err) => {
                     log::error!(target: "embedding",
                         action = "to_scylla",
-                        rid = te.rid,
-                        gid = te.gid.to_string(),
-                        cid = te.cid.to_string(),
-                        language = te.language.to_639_3().to_string(),
-                        used_tokens = used_tokens,
+                        rid = ctx.rid,
                         ids = log::as_serde!(unit.ids()),
-                        ai_elapsed = ai_elapsed,
                         elapsed = scylla_elapsed;
                         "{}", err,
                     );
@@ -340,15 +341,10 @@ async fn embedding(app: Arc<AppState>, te: TEParams) {
                 Ok(_) => {
                     log::info!(target: "embedding",
                         action = "to_scylla",
-                        rid = te.rid,
-                        gid = te.gid.to_string(),
-                        cid = te.cid.to_string(),
-                        language = te.language.to_639_3().to_string(),
-                        used_tokens = used_tokens,
+                        rid = ctx.rid,
                         ids = log::as_serde!(unit.ids()),
-                        ai_elapsed = ai_elapsed,
                         elapsed = scylla_elapsed;
-                        "success",
+                        "",
                     );
 
                     let vectors = embeddings[i].to_vec();
@@ -356,26 +352,16 @@ async fn embedding(app: Arc<AppState>, te: TEParams) {
                         Ok(()) => {
                             log::info!(target: "qdrant",
                                 action = "to_qdrant",
-                                rid = te.rid,
-                                gid = te.gid.to_string(),
-                                cid = te.cid.to_string(),
-                                language = te.language.to_639_3().to_string(),
-                                ai_elapsed = ai_elapsed,
-                                scylla_elapsed = scylla_elapsed,
-                                elapsed = start.elapsed().as_millis() as u64 - scylla_elapsed - ai_elapsed - unit_elapsed;
+                                rid = ctx.rid,
+                                elapsed = ctx.start.elapsed().as_millis() as u64 - scylla_elapsed - unit_elapsed;
                                 "",
                             )
                         }
                         Err(err) => {
                             log::error!(target: "qdrant",
                                 action = "to_qdrant",
-                                rid = te.rid,
-                                gid = te.gid.to_string(),
-                                cid = te.cid.to_string(),
-                                language = te.language.to_639_3().to_string(),
-                                ai_elapsed = ai_elapsed,
-                                scylla_elapsed = scylla_elapsed,
-                                elapsed = start.elapsed().as_millis() as u64- scylla_elapsed- ai_elapsed - unit_elapsed;
+                                rid = ctx.rid,
+                                elapsed = ctx.start.elapsed().as_millis() as u64- scylla_elapsed- unit_elapsed;
                                 "{}", err,
                             )
                         }
@@ -386,15 +372,12 @@ async fn embedding(app: Arc<AppState>, te: TEParams) {
     }
 
     log::info!(target: "embedding",
-        action = "finish",
-        rid = te.rid,
-        gid = te.gid.to_string(),
-        cid = te.cid.to_string(),
-        language = te.language.to_639_3().to_string(),
+        action = "finish_job",
+        rid = rid,
         elapsed = start.elapsed().as_millis() as u64,
         pieces = pieces,
         total_tokens = total_tokens;
-        "success",
+        "",
     );
 
     let _ = tokio_embedding.as_str(); // avoid unused warning

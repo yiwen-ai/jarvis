@@ -145,9 +145,9 @@ pub async fn create(
 
     tokio::spawn(summarize(
         app,
+        ctx.rid.clone(),
+        ctx.user,
         TEParams {
-            rid: ctx.rid.clone(),
-            user: ctx.user.to_string(),
             gid,
             cid,
             version: input.version as i16,
@@ -162,7 +162,7 @@ pub async fn create(
     })))
 }
 
-async fn summarize(app: Arc<AppState>, te: TEParams) {
+async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams) {
     let content = te.content.segment_for_summarizing(tokenizer::tokens_len);
     if content.is_empty() {
         return;
@@ -170,6 +170,19 @@ async fn summarize(app: Arc<AppState>, te: TEParams) {
 
     let pieces = content.len();
     let start = Instant::now();
+
+    log::info!(target: "summarizing",
+        action = "start_job",
+        rid = rid,
+        user = user.to_string(),
+        gid = te.gid.to_string(),
+        cid = te.cid.to_string(),
+        language = te.language.to_639_3().to_string(),
+        version = te.version,
+        pieces = pieces;
+        "",
+    );
+
     let tokio_translating = app.translating.clone();
     let mut total_tokens: usize = 0;
     let mut doc = db::Summarizing::with_pk(te.gid, te.cid, te.language, te.version);
@@ -177,18 +190,16 @@ async fn summarize(app: Arc<AppState>, te: TEParams) {
     let mut output = String::new();
     let mut progress = 0usize;
     for c in content {
-        let unit_elapsed = start.elapsed().as_millis() as u64;
+        let ctx = ReqContext::new(&rid, user, 0);
         let text = if output.is_empty() {
             c.to_owned()
         } else {
             output.clone() + "\n" + &c
         };
 
-        let res = app
-            .ai
-            .summarize(&te.rid, &te.user, te.language.to_name(), &text)
-            .await;
-        let ai_elapsed = start.elapsed().as_millis() as u64 - unit_elapsed;
+        let res = app.ai.summarize(&ctx, te.language.to_name(), &text).await;
+        let ai_elapsed = ctx.start.elapsed().as_millis() as u64;
+        let kv = ctx.get_kv().await;
         if let Err(err) = res {
             let mut cols = ColumnsMap::with_capacity(2);
             cols.set_as("updated_at", &(unix_ms() as i64));
@@ -196,13 +207,10 @@ async fn summarize(app: Arc<AppState>, te: TEParams) {
             let _ = doc.upsert_fields(&app.scylla, cols).await;
 
             log::error!(target: "summarizing",
-                action = "processing",
-                rid = te.rid,
-                gid = te.gid.to_string(),
-                cid = te.cid.to_string(),
-                language = te.language.to_639_3().to_string(),
-                version = te.version,
-                elapsed = ai_elapsed;
+                action = "call_openai",
+                rid = ctx.rid,
+                elapsed = ai_elapsed,
+                kv = log::as_serde!(kv);
                 "{}", err.to_string(),
             );
             return;
@@ -221,16 +229,13 @@ async fn summarize(app: Arc<AppState>, te: TEParams) {
         let _ = doc.upsert_fields(&app.scylla, cols).await;
 
         log::info!(target: "summarizing",
-            action = "processing",
-            rid = te.rid,
-            gid = te.gid.to_string(),
-            cid = te.cid.to_string(),
-            language = te.language.to_639_3().to_string(),
-            version = te.version,
+            action = "call_openai",
+            rid = ctx.rid,
             elapsed = ai_elapsed,
             tokens = used_tokens,
             total_elapsed = start.elapsed().as_millis(),
-            total_tokens = total_tokens;
+            total_tokens = total_tokens,
+            kv = log::as_serde!(kv);
             "{}/{}", progress, pieces,
         );
     }
@@ -243,38 +248,36 @@ async fn summarize(app: Arc<AppState>, te: TEParams) {
     cols.set_as("summary", &output);
     cols.set_as("error", &"".to_string());
 
+    let elapsed = start.elapsed().as_millis() as u64;
     match doc.upsert_fields(&app.scylla, cols).await {
         Err(err) => {
             log::error!(target: "summarizing",
                 action = "to_scylla",
-                rid = te.rid,
-                gid = te.gid.to_string(),
-                cid = te.cid.to_string(),
-                language = te.language.to_639_3().to_string(),
-                version = te.version,
-                elapsed = start.elapsed().as_millis() as u64,
-                summary = doc.summary.len(),
-                pieces = pieces,
-                total_tokens = total_tokens;
+                rid = &rid,
+                elapsed = start.elapsed().as_millis() as u64 - elapsed,
+                summary_length = output.len();
                 "{}", err,
             );
         }
         Ok(_) => {
             log::info!(target: "summarizing",
-                action = "finish",
-                rid = te.rid,
-                gid = te.gid.to_string(),
-                cid = te.cid.to_string(),
-                language = te.language.to_639_3().to_string(),
-                version = te.version,
-                elapsed = start.elapsed().as_millis() as u64,
-                summary = doc.summary.len(),
-                pieces = pieces,
-                total_tokens = total_tokens;
-                "success",
+                action = "to_scylla",
+                rid = &rid,
+                elapsed = start.elapsed().as_millis() as u64 - elapsed,
+                summary_length = output.len();
+                "",
             );
         }
     };
+
+    log::info!(target: "summarizing",
+        action = "finish_job",
+        rid = rid,
+        elapsed = start.elapsed().as_millis() as u64,
+        pieces = pieces,
+        total_tokens = total_tokens;
+        "",
+    );
 
     let _ = tokio_translating.as_str(); // avoid unused warning
 }
