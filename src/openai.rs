@@ -554,7 +554,7 @@ impl OpenAI {
     fn check_chat_response(
         rt: CreateChatCompletionResponse,
     ) -> Result<CreateChatCompletionResponse, HTTPError> {
-        if rt.choices.len() != 1 {
+        if rt.choices.len() == 1 {
             let choice = &rt.choices[0];
             match choice.finish_reason.as_ref().map_or("stop", |s| s.as_str()) {
                 "stop" => {

@@ -189,55 +189,59 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
 
     let mut output = String::new();
     let mut progress = 0usize;
-    for c in content {
-        let ctx = ReqContext::new(&rid, user, 0);
-        let text = if output.is_empty() {
-            c.to_owned()
-        } else {
-            output.clone() + "\n" + &c
-        };
+    if content.len() == 1 && tokenizer::tokens_len(&content[0]) < 100 {
+        output = content[0].to_owned();
+    } else {
+        for c in content {
+            let ctx = ReqContext::new(&rid, user, 0);
+            let text = if output.is_empty() {
+                c.to_owned()
+            } else {
+                output.clone() + "\n" + &c
+            };
 
-        let res = app.ai.summarize(&ctx, te.language.to_name(), &text).await;
-        let ai_elapsed = ctx.start.elapsed().as_millis() as u64;
-        let kv = ctx.get_kv().await;
-        if let Err(err) = res {
-            let mut cols = ColumnsMap::with_capacity(2);
+            let res = app.ai.summarize(&ctx, te.language.to_name(), &text).await;
+            let ai_elapsed = ctx.start.elapsed().as_millis() as u64;
+            let kv = ctx.get_kv().await;
+            if let Err(err) = res {
+                let mut cols = ColumnsMap::with_capacity(2);
+                cols.set_as("updated_at", &(unix_ms() as i64));
+                cols.set_as("error", &err.to_string());
+                let _ = doc.upsert_fields(&app.scylla, cols).await;
+
+                log::error!(target: "summarizing",
+                    action = "call_openai",
+                    rid = ctx.rid,
+                    elapsed = ai_elapsed,
+                    kv = log::as_serde!(kv);
+                    "{}", err.to_string(),
+                );
+                return;
+            }
+
+            let res = res.unwrap();
+            let used_tokens = res.0 as usize;
+            total_tokens += used_tokens;
+            progress += 1;
+            output = res.1;
+
+            let mut cols = ColumnsMap::with_capacity(3);
             cols.set_as("updated_at", &(unix_ms() as i64));
-            cols.set_as("error", &err.to_string());
+            cols.set_as("progress", &((progress * 100 / pieces) as i8));
+            cols.set_as("tokens", &(total_tokens as i32));
             let _ = doc.upsert_fields(&app.scylla, cols).await;
 
-            log::error!(target: "summarizing",
+            log::info!(target: "summarizing",
                 action = "call_openai",
                 rid = ctx.rid,
                 elapsed = ai_elapsed,
+                tokens = used_tokens,
+                total_elapsed = start.elapsed().as_millis(),
+                total_tokens = total_tokens,
                 kv = log::as_serde!(kv);
-                "{}", err.to_string(),
+                "{}/{}", progress, pieces,
             );
-            return;
         }
-
-        let res = res.unwrap();
-        let used_tokens = res.0 as usize;
-        total_tokens += used_tokens;
-        progress += 1;
-        output = res.1;
-
-        let mut cols = ColumnsMap::with_capacity(3);
-        cols.set_as("updated_at", &(unix_ms() as i64));
-        cols.set_as("progress", &((progress * 100 / pieces) as i8));
-        cols.set_as("tokens", &(total_tokens as i32));
-        let _ = doc.upsert_fields(&app.scylla, cols).await;
-
-        log::info!(target: "summarizing",
-            action = "call_openai",
-            rid = ctx.rid,
-            elapsed = ai_elapsed,
-            tokens = used_tokens,
-            total_elapsed = start.elapsed().as_millis(),
-            total_tokens = total_tokens,
-            kv = log::as_serde!(kv);
-            "{}/{}", progress, pieces,
-        );
     }
 
     // save target lang doc to db
