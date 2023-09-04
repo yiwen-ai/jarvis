@@ -15,6 +15,8 @@ pub mod translating;
 pub const APP_NAME: &str = env!("CARGO_PKG_NAME");
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub(crate) static PARALLEL_WORKS: usize = 10;
+
 // dashes (------) is a horizontal rule, work as a top section separator
 static SECTION_SEPARATOR: &str = "------";
 

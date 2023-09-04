@@ -9,7 +9,9 @@ use axum_web::erring::{HTTPError, SuccessResponse};
 use axum_web::object::{cbor_from_slice, PackObject};
 use scylla_orm::ColumnsMap;
 
-use crate::api::{AppState, TEContentList, TEOutput, TEParams, TESegmenter, SUMMARIZE_HIGH_TOKENS};
+use crate::api::{
+    AppState, TEContentList, TEOutput, TEParams, TESegmenter, PARALLEL_WORKS, SUMMARIZE_HIGH_TOKENS,
+};
 use crate::db;
 use crate::lang::Language;
 use crate::openai;
@@ -169,6 +171,7 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
         return;
     }
 
+    let tokio_translating = app.translating.clone();
     let pieces = content.len();
     let start = Instant::now();
 
@@ -184,15 +187,14 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
         "",
     );
 
-    let tokio_translating = app.translating.clone();
-    let mut total_tokens: usize = 0;
+    let mut progress = 0usize;
+    let mut total_tokens = 00usize;
     let mut doc = db::Summarizing::with_pk(te.gid, te.cid, te.language, te.version);
 
-    let mut progress = 0usize;
     let output = if pieces == 1 && tokenizer::tokens_len(&content[0]) < 100 {
         content[0].to_owned()
     } else {
-        let semaphore = Arc::new(Semaphore::new(5));
+        let semaphore = Arc::new(Semaphore::new(PARALLEL_WORKS));
         let (tx, mut rx) =
             mpsc::channel::<(usize, ReqContext, Result<(u32, String), HTTPError>)>(pieces);
 
@@ -204,18 +206,15 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
             let tx = tx.clone();
             let sem = semaphore.clone();
             tokio::spawn(async move {
-                match sem.acquire().await {
-                    Ok(permit) => {
-                        let ctx = ReqContext::new(rid, user, 0);
-                        let res = app.ai.summarize(&ctx, lang, &text).await;
-                        if res.is_ok() {
-                            drop(permit)
-                        } else {
-                            sem.close();
-                        }
-                        let _ = tx.send((i, ctx, res)).await;
+                if let Ok(permit) = sem.acquire().await {
+                    let ctx = ReqContext::new(rid, user, 0);
+                    let res = app.ai.summarize(&ctx, lang, &text).await;
+                    if res.is_ok() {
+                        drop(permit)
+                    } else {
+                        sem.close();
                     }
-                    Err(_) => {}
+                    let _ = tx.send((i, ctx, res)).await;
                 }
             });
         }
@@ -228,8 +227,6 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
             let ai_elapsed = ctx.start.elapsed().as_millis() as u64;
             let kv = ctx.get_kv().await;
             if let Err(err) = res {
-                semaphore.close();
-
                 let mut cols = ColumnsMap::with_capacity(2);
                 cols.set_as("updated_at", &(unix_ms() as i64));
                 cols.set_as("error", &err.to_string());
@@ -329,7 +326,7 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
             tokens = used_tokens,
             total_elapsed = start.elapsed().as_millis(),
             total_tokens = total_tokens,
-            piece_at = progress,
+            piece_at = pieces,
             kv = log::as_serde!(kv);
             "{}/{}", progress, pieces+1,
         );

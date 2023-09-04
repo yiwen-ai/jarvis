@@ -1,6 +1,7 @@
 use axum::{extract::State, Extension};
 use serde::{Deserialize, Serialize};
 use std::{str::FromStr, sync::Arc, time::Instant};
+use tokio::sync::{mpsc, Semaphore};
 use validator::Validate;
 
 use axum_web::context::{unix_ms, ReqContext};
@@ -8,7 +9,7 @@ use axum_web::erring::{HTTPError, SuccessResponse};
 use axum_web::object::{cbor_from_slice, cbor_to_vec, PackObject};
 use scylla_orm::ColumnsMap;
 
-use crate::api::{AppState, TEContentList, TEOutput, TEParams, TESegmenter};
+use crate::api::{AppState, TEContentList, TEOutput, TEParams, TESegmenter, PARALLEL_WORKS};
 use crate::db;
 use crate::lang::Language;
 use crate::openai;
@@ -276,6 +277,8 @@ async fn translate(
     origin_language: Language,
     model: openai::AIModel,
 ) {
+    let tokio_translating = app.translating.clone();
+
     let content = te.content.segment(&model, tokenizer::tokens_len);
     let pieces = content.len();
     let start = Instant::now();
@@ -291,25 +294,49 @@ async fn translate(
         "",
     );
 
-    let tokio_translating = app.translating.clone();
-    let mut content_list: TEContentList = Vec::new();
+    let semaphore = Arc::new(Semaphore::new(PARALLEL_WORKS));
+    let (tx, mut rx) =
+        mpsc::channel::<(usize, ReqContext, Result<(u32, TEContentList), HTTPError>)>(pieces);
+    for (i, unit) in content.into_iter().enumerate() {
+        let rid = rid.clone();
+        let user = user;
+        let app = app.clone();
+        let origin = origin_language.to_name();
+        let lang = te.language.to_name();
+        let model = model.clone();
+        let tx = tx.clone();
+        let sem = semaphore.clone();
+        tokio::spawn(async move {
+            if let Ok(permit) = sem.acquire().await {
+                let ctx = ReqContext::new(rid, user, 0);
+                match app
+                    .ai
+                    .translate(&ctx, &model, origin, lang, &unit.to_translating_list())
+                    .await
+                {
+                    Ok((used_tokens, content)) => {
+                        drop(permit);
+                        let _ = tx
+                            .send((i, ctx, Ok((used_tokens, unit.replace_texts(&content)))))
+                            .await;
+                    }
+                    Err(err) => {
+                        sem.close();
+                        let _ = tx.send((i, ctx, Err(err))).await;
+                    }
+                };
+            }
+        });
+    }
+    drop(tx);
+
     let mut total_tokens: usize = 0;
-    let mut doc = db::Translating::with_pk(te.gid, te.cid, te.language, te.version);
-
     let mut progress = 0usize;
-    for unit in content {
-        let ctx = ReqContext::new(rid.clone(), user, 0);
-        let res = app
-            .ai
-            .translate(
-                &ctx,
-                &model,
-                origin_language.to_name(),
-                te.language.to_name(),
-                &unit.to_translating_list(),
-            )
-            .await;
+    let mut doc = db::Translating::with_pk(te.gid, te.cid, te.language, te.version);
+    let mut res_list: Vec<TEContentList> = Vec::with_capacity(pieces);
+    res_list.resize(pieces, vec![]);
 
+    while let Some((i, ctx, res)) = rx.recv().await {
         let ai_elapsed = ctx.start.elapsed().as_millis() as u64;
         let kv = ctx.get_kv().await;
         if let Err(err) = res {
@@ -324,6 +351,7 @@ async fn translate(
                 cid = te.cid.to_string(),
                 language = te.language.to_639_3().to_string(),
                 elapsed = ai_elapsed,
+                piece_at = i,
                 kv = log::as_serde!(kv);
                 "{}", err.to_string(),
             );
@@ -332,8 +360,8 @@ async fn translate(
 
         let (used_tokens, content) = res.unwrap();
         total_tokens += used_tokens as usize;
-        content_list.extend(unit.replace_texts(&content));
         progress += 1;
+        res_list[i] = content;
 
         let mut cols = ColumnsMap::with_capacity(3);
         cols.set_as("updated_at", &(unix_ms() as i64));
@@ -349,9 +377,16 @@ async fn translate(
             tokens = used_tokens,
             total_elapsed = start.elapsed().as_millis(),
             total_tokens = total_tokens,
+            piece_at = i,
             kv = log::as_serde!(kv);
             "{}/{}", progress, pieces,
         );
+    }
+
+    let mut content_list: TEContentList =
+        Vec::with_capacity(res_list.iter().map(|x| x.len()).sum());
+    for content in res_list {
+        content_list.extend(content);
     }
 
     // save target lang doc to db
@@ -394,7 +429,7 @@ async fn translate(
         }
         Ok(_) => {
             log::info!(target: "translating",
-                action = "finish",
+                action = "to_scylla",
                 rid = &rid,
                 cid = te.cid.to_string(),
                 elapsed = start.elapsed().as_millis() as u64 - elapsed,
