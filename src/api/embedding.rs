@@ -277,7 +277,7 @@ async fn embedding(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
     let mut total_tokens: i32 = 0;
     let mut progress = 0usize;
     for unit_group in content {
-        let ctx = ReqContext::new(&rid, user, 0);
+        let ctx = ReqContext::new(rid.clone(), user, 0);
         let embedding_input: Vec<String> = unit_group
             .iter()
             .map(|unit| unit.to_embedding_string())

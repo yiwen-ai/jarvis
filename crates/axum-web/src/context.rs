@@ -21,9 +21,9 @@ pub struct ReqContext {
 }
 
 impl ReqContext {
-    pub fn new(rid: &str, user: xid::Id, rating: i8) -> Self {
+    pub fn new(rid: String, user: xid::Id, rating: i8) -> Self {
         Self {
-            rid: rid.to_string(),
+            rid,
             user,
             rating,
             unix_ms: unix_ms(),
@@ -63,7 +63,7 @@ pub async fn middleware<B>(mut req: Request<B>, next: Next<B>) -> Response {
 
     let uid = xid::Id::from_str(&user).unwrap_or_default();
 
-    let ctx = Arc::new(ReqContext::new(&rid, uid, rating));
+    let ctx = Arc::new(ReqContext::new(rid.clone(), uid, rating));
     req.extensions_mut().insert(ctx.clone());
 
     let res = next.run(req).await;

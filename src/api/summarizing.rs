@@ -1,6 +1,7 @@
 use axum::{extract::State, Extension};
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Instant};
+use tokio::sync::{mpsc, Semaphore};
 use validator::Validate;
 
 use axum_web::context::{unix_ms, ReqContext};
@@ -8,7 +9,7 @@ use axum_web::erring::{HTTPError, SuccessResponse};
 use axum_web::object::{cbor_from_slice, PackObject};
 use scylla_orm::ColumnsMap;
 
-use crate::api::{AppState, TEContentList, TEOutput, TEParams, TESegmenter};
+use crate::api::{AppState, TEContentList, TEOutput, TEParams, TESegmenter, SUMMARIZE_HIGH_TOKENS};
 use crate::db;
 use crate::lang::Language;
 use crate::openai;
@@ -173,7 +174,7 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
 
     log::info!(target: "summarizing",
         action = "start_job",
-        rid = rid,
+        rid = rid.clone(),
         user = user.to_string(),
         gid = te.gid.to_string(),
         cid = te.cid.to_string(),
@@ -187,23 +188,39 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
     let mut total_tokens: usize = 0;
     let mut doc = db::Summarizing::with_pk(te.gid, te.cid, te.language, te.version);
 
-    let mut output = String::new();
     let mut progress = 0usize;
-    if content.len() == 1 && tokenizer::tokens_len(&content[0]) < 100 {
-        output = content[0].to_owned();
+    let output = if pieces == 1 && tokenizer::tokens_len(&content[0]) < 100 {
+        content[0].to_owned()
     } else {
-        for c in content {
-            let ctx = ReqContext::new(&rid, user, 0);
-            let text = if output.is_empty() {
-                c.to_owned()
-            } else {
-                output.clone() + "\n" + &c
-            };
+        let semaphore = Arc::new(Semaphore::new(5));
+        let (tx, mut rx) =
+            mpsc::channel::<(usize, ReqContext, Result<(u32, String), HTTPError>)>(pieces);
 
-            let res = app.ai.summarize(&ctx, te.language.to_name(), &text).await;
+        for (i, text) in content.into_iter().enumerate() {
+            let rid = rid.clone();
+            let user = user;
+            let app = app.clone();
+            let lang = te.language.to_name();
+            let tx = tx.clone();
+            let sem = semaphore.clone();
+            tokio::spawn(async move {
+                let permit = sem.acquire().await.unwrap();
+                let ctx = ReqContext::new(rid, user, 0);
+                let res = app.ai.summarize(&ctx, lang, &text).await;
+                let _ = tx.send((i, ctx, res)).await;
+                drop(permit)
+            });
+        }
+
+        let mut res_list: Vec<String> = Vec::with_capacity(pieces);
+        res_list.resize(pieces, "".to_string());
+
+        while let Some((i, ctx, res)) = rx.recv().await {
             let ai_elapsed = ctx.start.elapsed().as_millis() as u64;
             let kv = ctx.get_kv().await;
             if let Err(err) = res {
+                semaphore.close();
+
                 let mut cols = ColumnsMap::with_capacity(2);
                 cols.set_as("updated_at", &(unix_ms() as i64));
                 cols.set_as("error", &err.to_string());
@@ -215,6 +232,7 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
                     cid = te.cid.to_string(),
                     language = te.language.to_639_3().to_string(),
                     elapsed = ai_elapsed,
+                    piece_at = i,
                     kv = log::as_serde!(kv);
                     "{}", err.to_string(),
                 );
@@ -225,11 +243,11 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
             let used_tokens = res.0 as usize;
             total_tokens += used_tokens;
             progress += 1;
-            output = res.1;
+            res_list[i] = res.1;
 
             let mut cols = ColumnsMap::with_capacity(3);
             cols.set_as("updated_at", &(unix_ms() as i64));
-            cols.set_as("progress", &((progress * 100 / pieces) as i8));
+            cols.set_as("progress", &((progress * 100 / pieces + 1) as i8));
             cols.set_as("tokens", &(total_tokens as i32));
             let _ = doc.upsert_fields(&app.scylla, cols).await;
 
@@ -241,11 +259,74 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
                 tokens = used_tokens,
                 total_elapsed = start.elapsed().as_millis(),
                 total_tokens = total_tokens,
+                piece_at = i,
                 kv = log::as_serde!(kv);
-                "{}/{}", progress, pieces,
+                "{}/{}", progress, pieces+1,
             );
         }
-    }
+
+        // summarize all pieces
+        let mut tokens_list: Vec<usize> =
+            res_list.iter().map(|s| tokenizer::tokens_len(s)).collect();
+        while tokens_list.len() > 2 && tokens_list.iter().sum::<usize>() > SUMMARIZE_HIGH_TOKENS {
+            let i = tokens_list.len() / 2 + 1;
+            // ignore pieces in middle.
+            res_list.remove(i);
+            tokens_list.remove(i);
+        }
+
+        let ctx = ReqContext::new(rid.clone(), user, 0);
+        let res = app
+            .ai
+            .summarize(&ctx, te.language.to_name(), &res_list.join("\n"))
+            .await;
+        let ai_elapsed = ctx.start.elapsed().as_millis() as u64;
+        let kv = ctx.get_kv().await;
+        if let Err(err) = res {
+            let mut cols = ColumnsMap::with_capacity(2);
+            cols.set_as("updated_at", &(unix_ms() as i64));
+            cols.set_as("error", &err.to_string());
+            let _ = doc.upsert_fields(&app.scylla, cols).await;
+
+            log::error!(target: "summarizing",
+                action = "call_openai",
+                rid = ctx.rid,
+                cid = te.cid.to_string(),
+                language = te.language.to_639_3().to_string(),
+                elapsed = ai_elapsed,
+                piece_at = pieces + 1,
+                kv = log::as_serde!(kv);
+                "{}", err.to_string(),
+            );
+            return;
+        }
+
+        let res = res.unwrap();
+        let used_tokens = res.0 as usize;
+        total_tokens += used_tokens;
+        progress += 1;
+
+        let mut cols = ColumnsMap::with_capacity(3);
+        cols.set_as("updated_at", &(unix_ms() as i64));
+        cols.set_as("progress", &100i8);
+        cols.set_as("tokens", &(total_tokens as i32));
+        let _ = doc.upsert_fields(&app.scylla, cols).await;
+
+        log::info!(target: "summarizing",
+            action = "call_openai",
+            rid = ctx.rid,
+            cid = te.cid.to_string(),
+            elapsed = ai_elapsed,
+            tokens = used_tokens,
+            total_elapsed = start.elapsed().as_millis(),
+            total_tokens = total_tokens,
+            piece_at = progress,
+            kv = log::as_serde!(kv);
+            "{}/{}", progress, pieces+1,
+        );
+
+        res.1
+    };
 
     // save target lang doc to db
     let mut cols = ColumnsMap::with_capacity(5);
@@ -260,7 +341,7 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
         Err(err) => {
             log::error!(target: "summarizing",
                 action = "to_scylla",
-                rid = &rid,
+                rid = rid.clone(),
                 cid = te.cid.to_string(),
                 elapsed = start.elapsed().as_millis() as u64 - elapsed,
                 summary_length = output.len();
@@ -270,7 +351,7 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
         Ok(_) => {
             log::info!(target: "summarizing",
                 action = "to_scylla",
-                rid = &rid,
+                rid = rid.clone(),
                 cid = te.cid.to_string(),
                 elapsed = start.elapsed().as_millis() as u64 - elapsed,
                 summary_length = output.len();

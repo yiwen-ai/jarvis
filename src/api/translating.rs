@@ -298,7 +298,7 @@ async fn translate(
 
     let mut progress = 0usize;
     for unit in content {
-        let ctx = ReqContext::new(&rid, user, 0);
+        let ctx = ReqContext::new(rid.clone(), user, 0);
         let res = app
             .ai
             .translate(
