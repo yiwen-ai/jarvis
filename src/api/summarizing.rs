@@ -204,11 +204,15 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
             let tx = tx.clone();
             let sem = semaphore.clone();
             tokio::spawn(async move {
-                let permit = sem.acquire().await.unwrap();
-                let ctx = ReqContext::new(rid, user, 0);
-                let res = app.ai.summarize(&ctx, lang, &text).await;
-                let _ = tx.send((i, ctx, res)).await;
-                drop(permit)
+                match sem.acquire().await {
+                    Ok(permit) => {
+                        let ctx = ReqContext::new(rid, user, 0);
+                        let res = app.ai.summarize(&ctx, lang, &text).await;
+                        let _ = tx.send((i, ctx, res)).await;
+                        drop(permit)
+                    }
+                    Err(_) => {}
+                }
             });
         }
 
