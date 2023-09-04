@@ -237,6 +237,7 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
                     rid = ctx.rid,
                     cid = te.cid.to_string(),
                     language = te.language.to_639_3().to_string(),
+                    start = ctx.unix_ms,
                     elapsed = ai_elapsed,
                     piece_at = i,
                     kv = log::as_serde!(kv);
@@ -261,6 +262,7 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
                 action = "call_openai",
                 rid = ctx.rid,
                 cid = te.cid.to_string(),
+                start = ctx.unix_ms,
                 elapsed = ai_elapsed,
                 tokens = used_tokens,
                 total_elapsed = start.elapsed().as_millis(),

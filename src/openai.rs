@@ -126,7 +126,7 @@ impl OpenAI {
             .http2_keep_alive_timeout(Duration::from_secs(15))
             .http2_keep_alive_while_idle(true)
             .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(300))
+            .timeout(Duration::from_secs(180))
             .user_agent(APP_USER_AGENT)
             .gzip(true)
             .default_headers(common_headers)
@@ -525,13 +525,12 @@ impl OpenAI {
                         .await?,
                 )
             }
-            Err(err) if err.code == 429 => {
-                ctx.set("retry_by_limited", api_url.to_string().into())
-                    .await;
+            Err(err) if err.code == 429 || err.code > 500 => {
+                ctx.set("retry_because", err.to_string().into()).await;
                 rand_index += 1;
                 (api_url, headers) = self.get_params(&model_name, rand_index);
                 ctx.set(
-                    "host_429",
+                    "retry_host",
                     headers
                         .get(X_HOST)
                         .map(|v| v.to_str().unwrap())
@@ -621,13 +620,12 @@ impl OpenAI {
 
         match Self::check_chat_response(res) {
             Ok(rt) => Ok(rt),
-            Err(err) if err.code == 429 => {
-                ctx.set("retry_by_limited", api_url.to_string().into())
-                    .await;
+            Err(err) if err.code == 429 || err.code > 500 => {
+                ctx.set("retry_because", err.to_string().into()).await;
                 rand_index += 1;
                 (api_url, headers) = self.get_params(&model_name, rand_index);
                 ctx.set(
-                    "host_429",
+                    "retry_host",
                     headers
                         .get(X_HOST)
                         .map(|v| v.to_str().unwrap())
@@ -720,13 +718,12 @@ impl OpenAI {
 
         match res {
             Ok(out) => Ok(out),
-            Err(err) if err.code == 429 => {
-                ctx.set("retry_by_limited", api_url.to_string().into())
-                    .await;
+            Err(err) if err.code == 429 || err.code > 500 => {
+                ctx.set("retry_because", err.to_string().into()).await;
                 rand_index += 1;
                 (api_url, headers) = self.get_params(&model_name, rand_index);
                 ctx.set(
-                    "host_429",
+                    "retry_host",
                     headers
                         .get(X_HOST)
                         .map(|v| v.to_str().unwrap())
@@ -788,12 +785,18 @@ impl OpenAI {
         };
 
         match res {
-            Err(err) => {
+            Err(mut err) => {
                 ctx.set(
                     "req_body",
                     serde_json::to_string(body).unwrap_or_default().into(),
                 )
                 .await;
+
+                if err.code == 500
+                    && (err.message.contains("timed out") || err.message.contains("timeout"))
+                {
+                    err.code = 504;
+                }
                 Err(err)
             }
             Ok(res) => {
