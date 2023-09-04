@@ -208,13 +208,18 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
                     Ok(permit) => {
                         let ctx = ReqContext::new(rid, user, 0);
                         let res = app.ai.summarize(&ctx, lang, &text).await;
+                        if res.is_ok() {
+                            drop(permit)
+                        } else {
+                            sem.close();
+                        }
                         let _ = tx.send((i, ctx, res)).await;
-                        drop(permit)
                     }
                     Err(_) => {}
                 }
             });
         }
+        drop(tx);
 
         let mut res_list: Vec<String> = Vec::with_capacity(pieces);
         res_list.resize(pieces, "".to_string());
@@ -298,7 +303,7 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
                 cid = te.cid.to_string(),
                 language = te.language.to_639_3().to_string(),
                 elapsed = ai_elapsed,
-                piece_at = pieces + 1,
+                piece_at = pieces,
                 kv = log::as_serde!(kv);
                 "{}", err.to_string(),
             );
