@@ -274,11 +274,13 @@ impl OpenAI {
             total_tokens: 0,
         });
 
+        let elapsed = ctx.start.elapsed().as_millis() as u32;
         ctx.set_kvs(vec![
-            ("elapsed", (ctx.start.elapsed().as_millis() as u64).into()),
+            ("elapsed", elapsed.into()),
             ("prompt_tokens", usage.prompt_tokens.into()),
             ("completion_tokens", usage.completion_tokens.into()),
             ("total_tokens", usage.total_tokens.into()),
+            ("speed", (usage.total_tokens * 1000 / elapsed).into()),
         ])
         .await;
 
@@ -369,11 +371,13 @@ impl OpenAI {
             total_tokens: 0,
         });
 
+        let elapsed = ctx.start.elapsed().as_millis() as u32;
         ctx.set_kvs(vec![
-            ("elapsed", (ctx.start.elapsed().as_millis() as u64).into()),
+            ("elapsed", elapsed.into()),
             ("prompt_tokens", usage.prompt_tokens.into()),
             ("completion_tokens", usage.completion_tokens.into()),
             ("total_tokens", usage.total_tokens.into()),
+            ("speed", (usage.total_tokens * 1000 / elapsed).into()),
         ])
         .await;
 
@@ -388,11 +392,13 @@ impl OpenAI {
         input: &Vec<String>,
     ) -> Result<(u32, Vec<Vec<f32>>), HTTPError> {
         let res = self.do_embedding(ctx, input).await?;
+        let elapsed = ctx.start.elapsed().as_millis() as u32;
         ctx.set_kvs(vec![
-            ("elapsed", (ctx.start.elapsed().as_millis() as u64).into()),
+            ("elapsed", elapsed.into()),
             ("prompt_tokens", res.usage.prompt_tokens.into()),
             ("total_tokens", res.usage.total_tokens.into()),
             ("embedding_size", res.data.len().into()),
+            ("speed", (res.usage.total_tokens * 1000 / elapsed).into()),
         ])
         .await;
 
@@ -458,6 +464,7 @@ impl OpenAI {
             .max_tokens(model.max_tokens() as u16 - input_tokens)
             .model(&model_name)
             .temperature(0f32)
+            .top_p(0f32)
             .messages(messages)
             .build()
             .map_err(HTTPError::with_500)?;
@@ -578,6 +585,7 @@ impl OpenAI {
         let mut req_body = CreateChatCompletionRequestArgs::default()
             .max_tokens(800u16)
             .temperature(0f32)
+            .top_p(0f32)
             .model(&model_name)
             .messages(messages)
             .build()
