@@ -749,7 +749,7 @@ impl OpenAI {
         I: Serialize + ?Sized,
         O: DeserializeOwned,
     {
-        let res: Result<Response, HTTPError> = {
+        let res: Result<Response, HTTPError> = async {
             let data = serde_json::to_vec(body).map_err(HTTPError::with_500)?;
             ctx.set_kvs(vec![
                 ("url", url.to_string().into()),
@@ -782,7 +782,8 @@ impl OpenAI {
             };
 
             Ok(res)
-        };
+        }
+        .await;
 
         match res {
             Err(mut err) => {
