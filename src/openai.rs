@@ -498,7 +498,7 @@ impl OpenAI {
 
         let res = self
             .request(ctx, api_url.clone(), headers.clone(), &req_body)
-            .await?;
+            .await;
 
         match Self::check_chat_response(res) {
             Ok(rt) => Ok(rt),
@@ -522,7 +522,7 @@ impl OpenAI {
                 .await;
                 Self::check_chat_response(
                     self.request(ctx, api_url.clone(), headers.clone(), &req_body)
-                        .await?,
+                        .await,
                 )
             }
             Err(err) if err.code == 429 || err.code > 500 => {
@@ -540,7 +540,7 @@ impl OpenAI {
                 .await;
                 Self::check_chat_response(
                     self.request(ctx, api_url.clone(), headers.clone(), &req_body)
-                        .await?,
+                        .await,
                 )
             }
             Err(err) => Err(err),
@@ -616,7 +616,7 @@ impl OpenAI {
 
         let res = self
             .request(ctx, api_url.clone(), headers.clone(), &req_body)
-            .await?;
+            .await;
 
         match Self::check_chat_response(res) {
             Ok(rt) => Ok(rt),
@@ -635,7 +635,7 @@ impl OpenAI {
                 .await;
                 Self::check_chat_response(
                     self.request(ctx, api_url.clone(), headers.clone(), &req_body)
-                        .await?,
+                        .await,
                 )
             }
             Err(err) => Err(err),
@@ -643,43 +643,48 @@ impl OpenAI {
     }
 
     fn check_chat_response(
-        rt: CreateChatCompletionResponse,
+        rt: Result<CreateChatCompletionResponse, HTTPError>,
     ) -> Result<CreateChatCompletionResponse, HTTPError> {
-        if rt.choices.len() == 1 {
-            let choice = &rt.choices[0];
-            match choice.finish_reason.as_ref().map_or("stop", |s| s.as_str()) {
-                "stop" => {
-                    return Ok(rt);
+        match rt {
+            Err(err) => Err(err),
+            Ok(rt) => {
+                if rt.choices.len() == 1 {
+                    let choice = &rt.choices[0];
+                    match choice.finish_reason.as_ref().map_or("stop", |s| s.as_str()) {
+                        "stop" => {
+                            return Ok(rt);
+                        }
+
+                        "content_filter" => {
+                            return Err(HTTPError::new(
+                                452,
+                                "Content was triggered the filtering model".to_string(),
+                            ));
+                        }
+
+                        "length" => {
+                            return Err(HTTPError::new(
+                                422,
+                                "Incomplete output due to max_tokens parameter".to_string(),
+                            ));
+                        }
+
+                        reason => {
+                            return Err(HTTPError::new(
+                                500,
+                                format!("Unknown finish reason: {}", reason),
+                            ));
+                        }
+                    }
                 }
 
-                "content_filter" => {
-                    return Err(HTTPError::new(
-                        452,
-                        "Content was triggered the filtering model".to_string(),
-                    ));
-                }
-
-                "length" => {
-                    return Err(HTTPError::new(
-                        422,
-                        "Incomplete output due to max_tokens parameter".to_string(),
-                    ));
-                }
-
-                reason => {
-                    return Err(HTTPError::new(
-                        500,
-                        format!("Unknown finish reason: {}", reason),
-                    ));
-                }
+                Err(HTTPError {
+                    code: 500,
+                    message: format!("Unexpected choices: {}", rt.choices.len()),
+                    data: None,
+                })
             }
         }
-
-        Err(HTTPError {
-            code: 500,
-            message: format!("Unexpected choices: {}", rt.choices.len()),
-            data: None,
-        })
     }
 
     // https://learn.microsoft.com/en-us/azure/cognitive-services/openai/how-to/embeddings?tabs=console
