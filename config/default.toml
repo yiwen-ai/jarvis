@@ -30,6 +30,14 @@ api_key = ""
 client_pem_file = ""
 client_root_cert_file = ""
 
+[ai.tokens_rate]
+English = 1.0
+Chinese = 1.20
+Japanese = 1.65
+French = 1.31
+Korean = 1.57
+Arabic = 2.10
+
 [ai.openai]
 agent_endpoint = ""
 api_key = ""

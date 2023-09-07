@@ -4,11 +4,11 @@ use async_openai::types::{
     CreateChatCompletionResponse, CreateEmbeddingRequestArgs, CreateEmbeddingResponse, Role, Usage,
 };
 use axum::http::header::{HeaderMap, HeaderName};
+use isolang::Language;
 use libflate::gzip::Encoder;
 use reqwest::{header, Client, ClientBuilder, Identity, Response};
 use serde::{de::DeserializeOwned, Serialize};
-use std::path::Path;
-use std::{str::FromStr, string::ToString};
+use std::{collections::HashMap, path::Path, str::FromStr, string::ToString};
 use tiktoken_rs::{num_tokens_from_messages, ChatCompletionRequestMessage};
 use tokio::time::Duration;
 
@@ -94,6 +94,7 @@ impl ToString for AIModel {
 
 pub struct OpenAI {
     client: Client,
+    tokens_rate: HashMap<String, f32>,
     openai: APIParams,
     azureais: Vec<APIParams>,
 }
@@ -146,6 +147,7 @@ impl OpenAI {
 
         let mut openai = Self {
             client,
+            tokens_rate: opts.tokens_rate,
             openai: APIParams {
                 headers: openai_headers,
                 embedding_url: agent.join("/v1/embeddings").ok(),
@@ -214,6 +216,10 @@ impl OpenAI {
         openai
     }
 
+    fn get_tokens_rate(&self, from: &str, to: &str) -> f32 {
+        self.tokens_rate.get(to).unwrap_or(&1.2) / self.tokens_rate.get(from).unwrap_or(&1.2)
+    }
+
     fn get_params(
         &self,
         model_name: &str,
@@ -274,12 +280,19 @@ impl OpenAI {
             total_tokens: 0,
         });
 
+        let real_tokens_rate: f32 = if usage.prompt_tokens > 1000 {
+            usage.completion_tokens as f32 / (usage.prompt_tokens as f32 - 90f32)
+        } else {
+            1.0f32
+        };
+
         let elapsed = ctx.start.elapsed().as_millis() as u32;
         ctx.set_kvs(vec![
             ("elapsed", elapsed.into()),
             ("prompt_tokens", usage.prompt_tokens.into()),
             ("completion_tokens", usage.completion_tokens.into()),
             ("total_tokens", usage.total_tokens.into()),
+            ("real_tokens_rate", real_tokens_rate.into()),
             ("speed", (usage.total_tokens * 1000 / elapsed).into()),
         ])
         .await;
@@ -463,8 +476,8 @@ impl OpenAI {
         let mut req_body = CreateChatCompletionRequestArgs::default()
             .max_tokens(model.max_tokens() as u16 - input_tokens)
             .model(&model_name)
-            .temperature(0f32)
-            .top_p(0f32)
+            .temperature(0.2f32)
+            .top_p(0.9f32)
             .messages(messages)
             .build()
             .map_err(HTTPError::with_500)?;
@@ -472,7 +485,8 @@ impl OpenAI {
             req_body.user = Some(ctx.user.to_string())
         }
 
-        if req_body.max_tokens.unwrap() < (input_tokens as f32 * 1.2) as u16 {
+        let tokens_rate = self.get_tokens_rate(origin_lang, target_lang);
+        if req_body.max_tokens.unwrap() < (input_tokens as f32 * tokens_rate) as u16 {
             // only for gpt-3.5, run with gpt-3.5-16k
             // should not happen for gpt-4
             model_name = MODEL_GPT_3_5_16K.to_string();
@@ -482,8 +496,11 @@ impl OpenAI {
         }
 
         ctx.set_kvs(vec![
+            ("origin_lang", origin_lang.into()),
+            ("target_lang", target_lang.into()),
             ("input_tokens", input_tokens.into()),
             ("max_tokens", req_body.max_tokens.into()),
+            ("tokens_rate", tokens_rate.into()),
             ("model", model_name.clone().into()),
             (
                 "host",
@@ -583,8 +600,8 @@ impl OpenAI {
 
         let mut req_body = CreateChatCompletionRequestArgs::default()
             .max_tokens(800u16)
-            .temperature(0f32)
-            .top_p(0f32)
+            .temperature(0.3f32)
+            .top_p(0.9f32)
             .model(&model_name)
             .messages(messages)
             .build()

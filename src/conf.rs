@@ -1,5 +1,6 @@
 use config::{Config, ConfigError, File, FileFormat};
 use serde::Deserialize;
+use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Log {
@@ -56,6 +57,7 @@ pub struct Agent {
 #[derive(Debug, Deserialize, Clone)]
 pub struct AI {
     pub agent: Agent,
+    pub tokens_rate: HashMap<String, f32>,
     pub openai: OpenAI,
     pub azureais: Vec<AzureAI>,
 }
