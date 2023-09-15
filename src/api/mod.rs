@@ -408,17 +408,18 @@ impl TESegmenter for TEContentList {
 // keyword_1, keyword_2, keyword_3
 // summary_text
 pub fn extract_summary_keywords(input: &str) -> (String, Vec<String>) {
-    let mut ls: Vec<&str> = input.split('\n').filter(|s| !s.trim().is_empty()).collect();
+    let ls: Vec<&str> = input
+        .split('\n')
+        .filter_map(|s| match s.trim() {
+            "" => None,
+            v => Some(v),
+        })
+        .collect();
     if ls.is_empty() {
         return (String::new(), Vec::new());
     }
     if ls.len() == 1 {
-        return (input.trim().to_string(), Vec::new());
-    }
-
-    // original text exists in summary?
-    if ls.len() > 2 {
-        ls = ls[(ls.len() - 2)..].to_vec();
+        return (ls[0].to_string(), Vec::new());
     }
 
     let keywords: Vec<String> = ls[0]
@@ -431,7 +432,7 @@ pub fn extract_summary_keywords(input: &str) -> (String, Vec<String>) {
         .map(str::to_string)
         .collect();
 
-    (ls[1].trim().to_string(), keywords)
+    (ls[1..].join("\n"), keywords)
 }
 
 #[cfg(test)]
