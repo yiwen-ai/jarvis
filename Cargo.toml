@@ -1,6 +1,6 @@
 [package]
 name = "jarvis"
-version = "0.11.11"
+version = "0.12.0"
 edition = "2021"
 rust-version = "1.64"
 description = ""
@@ -111,6 +111,7 @@ async-openai = "0.14"
 futures = "0.3"
 sha3 = "0.10"
 rand = "0.8"
+finl_unicode = "1.2.0"
 
 [profile.release]
 lto = true

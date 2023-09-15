@@ -1,5 +1,6 @@
 use axum::extract::State;
 use axum_web::object::PackObject;
+use finl_unicode::categories::CharacterCategories;
 use isolang::Language;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -403,6 +404,31 @@ impl TESegmenter for TEContentList {
     }
 }
 
+// Expected input format:
+// keyword_1, keyword_2, keyword_3
+// summary_text
+pub fn extract_summary_keywords(input: &str) -> (String, Vec<String>) {
+    let ls: Vec<&str> = input.split('\n').filter(|s| !s.trim().is_empty()).collect();
+    if ls.is_empty() {
+        return (String::new(), Vec::new());
+    }
+    if ls.len() == 1 {
+        return (input.trim().to_string(), Vec::new());
+    }
+
+    let keywords: Vec<String> = ls[0]
+        .trim()
+        .split(char::is_punctuation)
+        .filter_map(|s| match s.trim_matches(|c: char| !c.is_letter()) {
+            "" => None,
+            v => Some(v),
+        })
+        .map(str::to_string)
+        .collect();
+
+    (ls[1].trim().to_string(), keywords)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -534,6 +560,105 @@ mod tests {
                 id: "efg".to_string(),
                 texts: vec!["text_1".to_string(), "text_2".to_string()],
             },
+        );
+    }
+
+    #[test]
+    fn extract_summary_keywords_works() {
+        let input =
+            "亿文是一个面向全球用户提供知识文档、文章的创作、智能翻译、分享等功能的在线服务平台。\n";
+        let res = extract_summary_keywords(input);
+        assert_eq!(
+            res,
+            (
+                "亿文是一个面向全球用户提供知识文档、文章的创作、智能翻译、分享等功能的在线服务平台。"
+                    .to_string(),
+                vec![]
+            )
+        );
+
+        let input = "在线服务平台, 知识文档, 文章创作, 智能翻译, 分享\n亿文是一个面向全球用户提供知识文档、文章的创作、智能翻译、分享等功能的在线服务平台。";
+        let res = extract_summary_keywords(input);
+        assert_eq!(
+            res,
+            (
+                "亿文是一个面向全球用户提供知识文档、文章的创作、智能翻译、分享等功能的在线服务平台。"
+                    .to_string(),
+                vec![
+                    "在线服务平台".to_string(),
+                    "知识文档".to_string(),
+                    "文章创作".to_string(),
+                    "智能翻译".to_string(),
+                    "分享".to_string()
+                ]
+            )
+        );
+
+        let input = "在线服务平台, 知识文档, 文章创作, 智能翻译, 分享\r\n亿文是一个面向全球用户提供知识文档、文章的创作、智能翻译、分享等功能的在线服务平台。";
+        let res = extract_summary_keywords(input);
+        assert_eq!(
+            res,
+            (
+                "亿文是一个面向全球用户提供知识文档、文章的创作、智能翻译、分享等功能的在线服务平台。"
+                    .to_string(),
+                vec![
+                    "在线服务平台".to_string(),
+                    "知识文档".to_string(),
+                    "文章创作".to_string(),
+                    "智能翻译".to_string(),
+                    "分享".to_string()
+                ]
+            )
+        );
+
+        let input = "在线服务平台, 知识文档, 文章创作, 智能翻译, 分享\n\n亿文是一个面向全球用户提供知识文档、文章的创作、智能翻译、分享等功能的在线服务平台。";
+        let res = extract_summary_keywords(input);
+        assert_eq!(
+            res,
+            (
+                "亿文是一个面向全球用户提供知识文档、文章的创作、智能翻译、分享等功能的在线服务平台。"
+                    .to_string(),
+                vec![
+                    "在线服务平台".to_string(),
+                    "知识文档".to_string(),
+                    "文章创作".to_string(),
+                    "智能翻译".to_string(),
+                    "分享".to_string()
+                ]
+            )
+        );
+
+        let input = "在线服务平台，知识文档，文章创作，智能翻译，分享\n 亿文是一个面向全球用户提供知识文档、文章的创作、智能翻译、分享等功能的在线服务平台。";
+        let res = extract_summary_keywords(input);
+        assert_eq!(
+            res,
+            (
+                "亿文是一个面向全球用户提供知识文档、文章的创作、智能翻译、分享等功能的在线服务平台。"
+                    .to_string(),
+                vec![
+                    "在线服务平台".to_string(),
+                    "知识文档".to_string(),
+                    "文章创作".to_string(),
+                    "智能翻译".to_string(),
+                    "分享".to_string()
+                ]
+            )
+        );
+        let input = "\"在线服务平台\"，\"知识文档\",文章创作，“智能翻译”，‘分享’\n 亿文是一个面向全球用户提供知识文档、文章的创作、智能翻译、分享等功能的在线服务平台。";
+        let res = extract_summary_keywords(input);
+        assert_eq!(
+            res,
+            (
+                "亿文是一个面向全球用户提供知识文档、文章的创作、智能翻译、分享等功能的在线服务平台。"
+                    .to_string(),
+                vec![
+                    "在线服务平台".to_string(),
+                    "知识文档".to_string(),
+                    "文章创作".to_string(),
+                    "智能翻译".to_string(),
+                    "分享".to_string()
+                ]
+            )
         );
     }
 }

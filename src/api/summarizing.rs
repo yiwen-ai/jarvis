@@ -10,7 +10,8 @@ use axum_web::object::{cbor_from_slice, PackObject};
 use scylla_orm::ColumnsMap;
 
 use crate::api::{
-    AppState, TEContentList, TEOutput, TEParams, TESegmenter, PARALLEL_WORKS, SUMMARIZE_HIGH_TOKENS,
+    extract_summary_keywords, AppState, TEContentList, TEOutput, TEParams, TESegmenter,
+    PARALLEL_WORKS, SUMMARIZE_HIGH_TOKENS,
 };
 use crate::db;
 use crate::lang::Language;
@@ -40,6 +41,7 @@ pub struct SummarizingOutput {
     pub updated_at: i64,
     pub tokens: u32,
     pub summary: String,
+    pub keywords: Vec<String>,
     pub error: String,
 }
 
@@ -67,6 +69,7 @@ pub async fn get(
     let mut doc = db::Summarizing::with_pk(gid, cid, language, input.version as i16);
     doc.get_one(&app.scylla, vec![]).await?;
 
+    let (summary, keywords) = extract_summary_keywords(&doc.summary);
     Ok(to.with(SuccessResponse::new(SummarizingOutput {
         gid: to.with(doc.gid),
         cid: to.with(doc.cid),
@@ -76,7 +79,8 @@ pub async fn get(
         progress: doc.progress,
         updated_at: doc.updated_at,
         tokens: doc.tokens as u32,
-        summary: doc.summary,
+        summary,
+        keywords,
         error: doc.error,
     })))
 }
@@ -273,67 +277,76 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
             );
         }
 
-        // summarize all pieces
-        let mut tokens_list: Vec<usize> =
-            res_list.iter().map(|s| tokenizer::tokens_len(s)).collect();
-        while tokens_list.len() > 2 && tokens_list.iter().sum::<usize>() > SUMMARIZE_HIGH_TOKENS {
-            let i = tokens_list.len() / 2 + 1;
-            // ignore pieces in middle.
-            res_list.remove(i);
-            tokens_list.remove(i);
-        }
+        if res_list.len() == 1 {
+            res_list[0].to_owned()
+        } else {
+            // extract summary from all pieces and summarize again.
+            let mut res_list: Vec<String> = res_list
+                .into_iter()
+                .map(|s| extract_summary_keywords(&s).0)
+                .collect();
+            let mut tokens_list: Vec<usize> =
+                res_list.iter().map(|s| tokenizer::tokens_len(s)).collect();
+            while tokens_list.len() > 2 && tokens_list.iter().sum::<usize>() > SUMMARIZE_HIGH_TOKENS
+            {
+                let i = tokens_list.len() / 2 + 1;
+                // ignore pieces in middle.
+                res_list.remove(i);
+                tokens_list.remove(i);
+            }
 
-        let ctx = ReqContext::new(rid.clone(), user, 0);
-        let res = app
-            .ai
-            .summarize(&ctx, te.language.to_name(), &res_list.join("\n"))
-            .await;
-        let ai_elapsed = ctx.start.elapsed().as_millis() as u64;
-        let kv = ctx.get_kv().await;
-        if let Err(err) = res {
-            let mut cols = ColumnsMap::with_capacity(2);
+            let ctx = ReqContext::new(rid.clone(), user, 0);
+            let res = app
+                .ai
+                .summarize(&ctx, te.language.to_name(), &res_list.join("\n"))
+                .await;
+            let ai_elapsed = ctx.start.elapsed().as_millis() as u64;
+            let kv = ctx.get_kv().await;
+            if let Err(err) = res {
+                let mut cols = ColumnsMap::with_capacity(2);
+                cols.set_as("updated_at", &(unix_ms() as i64));
+                cols.set_as("error", &err.to_string());
+                let _ = doc.upsert_fields(&app.scylla, cols).await;
+
+                log::error!(target: "summarizing",
+                    action = "call_openai",
+                    rid = ctx.rid,
+                    cid = te.cid.to_string(),
+                    language = te.language.to_639_3().to_string(),
+                    elapsed = ai_elapsed,
+                    piece_at = pieces,
+                    kv = log::as_serde!(kv);
+                    "{}", err.to_string(),
+                );
+                return;
+            }
+
+            let res = res.unwrap();
+            let used_tokens = res.0 as usize;
+            total_tokens += used_tokens;
+            progress += 1;
+
+            let mut cols = ColumnsMap::with_capacity(3);
             cols.set_as("updated_at", &(unix_ms() as i64));
-            cols.set_as("error", &err.to_string());
+            cols.set_as("progress", &100i8);
+            cols.set_as("tokens", &(total_tokens as i32));
             let _ = doc.upsert_fields(&app.scylla, cols).await;
 
-            log::error!(target: "summarizing",
+            log::info!(target: "summarizing",
                 action = "call_openai",
                 rid = ctx.rid,
                 cid = te.cid.to_string(),
-                language = te.language.to_639_3().to_string(),
                 elapsed = ai_elapsed,
+                tokens = used_tokens,
+                total_elapsed = start.elapsed().as_millis(),
+                total_tokens = total_tokens,
                 piece_at = pieces,
                 kv = log::as_serde!(kv);
-                "{}", err.to_string(),
+                "{}/{}", progress, pieces+1,
             );
-            return;
+
+            res.1
         }
-
-        let res = res.unwrap();
-        let used_tokens = res.0 as usize;
-        total_tokens += used_tokens;
-        progress += 1;
-
-        let mut cols = ColumnsMap::with_capacity(3);
-        cols.set_as("updated_at", &(unix_ms() as i64));
-        cols.set_as("progress", &100i8);
-        cols.set_as("tokens", &(total_tokens as i32));
-        let _ = doc.upsert_fields(&app.scylla, cols).await;
-
-        log::info!(target: "summarizing",
-            action = "call_openai",
-            rid = ctx.rid,
-            cid = te.cid.to_string(),
-            elapsed = ai_elapsed,
-            tokens = used_tokens,
-            total_elapsed = start.elapsed().as_millis(),
-            total_tokens = total_tokens,
-            piece_at = pieces,
-            kv = log::as_serde!(kv);
-            "{}/{}", progress, pieces+1,
-        );
-
-        res.1
     };
 
     // save target lang doc to db
