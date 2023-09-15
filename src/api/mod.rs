@@ -439,6 +439,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tecontent_to_string() {
+        assert_eq!(
+            TEContent {
+                id: "abc".to_string(),
+                texts: vec![
+                    "hello \n".to_string(),
+                    "\r\n\n\nworld".to_string(),
+                    "你\r \n好\n".to_string(),
+                ],
+            }
+            .to_string(' '),
+            "hello world 你 好".to_string()
+        );
+    }
+
+    #[test]
     fn teunit_to_translating() {
         let unit = TEUnit {
             tokens: 0,

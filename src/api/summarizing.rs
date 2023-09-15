@@ -195,8 +195,8 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
     let mut total_tokens = 00usize;
     let mut doc = db::Summarizing::with_pk(te.gid, te.cid, te.language, te.version);
 
-    let output = if pieces == 1 && tokenizer::tokens_len(&content[0]) < 100 {
-        content[0].to_owned()
+    let output = if pieces == 1 && tokenizer::tokens_len(&content[0]) <= 100 {
+        content[0].replace('\n', ". ")
     } else {
         let semaphore = Arc::new(Semaphore::new(PARALLEL_WORKS));
         let (tx, mut rx) =
@@ -212,7 +212,13 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
             tokio::spawn(async move {
                 if let Ok(permit) = sem.acquire().await {
                     let ctx = ReqContext::new(rid, user, 0);
-                    let res = app.ai.summarize(&ctx, lang, &text).await;
+                    let res = if tokenizer::tokens_len(&text) > 100 {
+                        app.ai.summarize(&ctx, lang, &text).await
+                    } else {
+                        // do not need summarizing if too short
+                        Ok((0, text))
+                    };
+
                     if res.is_ok() {
                         drop(permit)
                     } else {
@@ -315,6 +321,7 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
                     language = te.language.to_639_3().to_string(),
                     elapsed = ai_elapsed,
                     piece_at = pieces,
+                    list = log::as_serde!(res_list),
                     kv = log::as_serde!(kv);
                     "{}", err.to_string(),
                 );
@@ -341,6 +348,7 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
                 total_elapsed = start.elapsed().as_millis(),
                 total_tokens = total_tokens,
                 piece_at = pieces,
+                list = log::as_serde!(res_list),
                 kv = log::as_serde!(kv);
                 "{}/{}", progress, pieces+1,
             );
