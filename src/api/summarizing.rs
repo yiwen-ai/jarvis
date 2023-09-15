@@ -216,7 +216,7 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
                         app.ai.summarize(&ctx, lang, &text).await
                     } else {
                         // do not need summarizing if too short
-                        Ok((0, text))
+                        Ok((0, text.clone()))
                     };
 
                     if res.is_ok() {
@@ -224,6 +224,13 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
                     } else {
                         sem.close();
                     }
+                    log::info!(target: "summarizing",
+                        action = "debug",
+                        tokens = tokenizer::tokens_len(&text),
+                        input = &text,
+                        output = res.as_ref().map(|r| r.1.as_str()).unwrap_or("");
+                        "",
+                    );
                     let _ = tx.send((i, ctx, res)).await;
                 }
             });
