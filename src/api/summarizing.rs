@@ -224,13 +224,6 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
                     } else {
                         sem.close();
                     }
-                    log::info!(target: "summarizing",
-                        action = "debug",
-                        tokens = tokenizer::tokens_len(&text),
-                        input = &text,
-                        output = res.as_ref().map(|r| r.1.as_str()).unwrap_or("");
-                        "",
-                    );
                     let _ = tx.send((i, ctx, res)).await;
                 }
             });

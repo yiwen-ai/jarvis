@@ -773,6 +773,13 @@ impl OpenAI {
     {
         let res: Result<Response, HTTPError> = async {
             let data = serde_json::to_vec(body).map_err(HTTPError::with_500)?;
+            log::info!(target: "summarizing",
+                action = "debug",
+                input = unsafe {
+                    String::from_utf8_unchecked(data.clone())
+                };
+                "",
+            );
             ctx.set_kvs(vec![
                 ("url", url.to_string().into()),
                 ("body_length", data.len().into()),
@@ -825,6 +832,13 @@ impl OpenAI {
             Ok(res) => {
                 if res.status().is_success() {
                     let data = res.bytes().await.map_err(HTTPError::with_500)?;
+                    log::info!(target: "summarizing",
+                        action = "debug",
+                        output = unsafe {
+                            String::from_utf8_unchecked(data.to_vec())
+                        };
+                        "",
+                    );
                     return serde_json::from_slice::<O>(&data).map_err(HTTPError::with_500);
                 }
 
