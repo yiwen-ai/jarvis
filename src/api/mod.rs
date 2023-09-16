@@ -408,7 +408,7 @@ impl TESegmenter for TEContentList {
 // keyword_1, keyword_2, keyword_3
 // summary_text
 pub fn extract_summary_keywords(input: &str) -> (String, Vec<String>) {
-    let ls: Vec<&str> = input
+    let mut ls: Vec<&str> = input
         .split('\n')
         .filter_map(|s| match s.trim() {
             "" => None,
@@ -420,6 +420,11 @@ pub fn extract_summary_keywords(input: &str) -> (String, Vec<String>) {
     }
     if ls.len() == 1 {
         return (ls[0].to_string(), Vec::new());
+    }
+    if ls.len() == 2 && ls[0].len() > ls[1].len() {
+        // summary_text
+        // keyword_1, keyword_2, keyword_3
+        (ls[0], ls[1]) = (ls[1], ls[0])
     }
 
     let keywords: Vec<String> = ls[0]
@@ -634,6 +639,23 @@ mod tests {
         );
 
         let input = "在线服务平台, 知识文档, 文章创作, 智能翻译, 分享\n\n亿文是一个面向全球用户提供知识文档、文章的创作、智能翻译、分享等功能的在线服务平台。";
+        let res = extract_summary_keywords(input);
+        assert_eq!(
+            res,
+            (
+                "亿文是一个面向全球用户提供知识文档、文章的创作、智能翻译、分享等功能的在线服务平台。"
+                    .to_string(),
+                vec![
+                    "在线服务平台".to_string(),
+                    "知识文档".to_string(),
+                    "文章创作".to_string(),
+                    "智能翻译".to_string(),
+                    "分享".to_string()
+                ]
+            )
+        );
+
+        let input = "\n\n亿文是一个面向全球用户提供知识文档、文章的创作、智能翻译、分享等功能的在线服务平台。\r\n在线服务平台, 知识文档, 文章创作, 智能翻译, 分享";
         let res = extract_summary_keywords(input);
         assert_eq!(
             res,

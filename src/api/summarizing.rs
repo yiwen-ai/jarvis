@@ -321,7 +321,6 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
                     language = te.language.to_639_3().to_string(),
                     elapsed = ai_elapsed,
                     piece_at = pieces,
-                    list = log::as_serde!(res_list),
                     kv = log::as_serde!(kv);
                     "{}", err.to_string(),
                 );
@@ -348,7 +347,6 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
                 total_elapsed = start.elapsed().as_millis(),
                 total_tokens = total_tokens,
                 piece_at = pieces,
-                list = log::as_serde!(res_list),
                 kv = log::as_serde!(kv);
                 "{}/{}", progress, pieces+1,
             );
