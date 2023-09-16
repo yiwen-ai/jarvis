@@ -79,7 +79,14 @@ pub async fn get(
     })))
 }
 
-const IGNORE_LANGGUAGES: [&str; 6] = ["abk", "ava", "bak", "lim", "nya", "iii"];
+const IGNORE_LANGGUAGES: [&str; 68] = [
+    "aar", "aka", "abk", "amh", "ava", "bak", "bam", "bod", "chv", "div", "dzo", "eus", "eve",
+    "hat", "hau", "hye", "glv", "lim", "nya", "iii", "iku", "ibo", "kat", "kal", "khm", "kik",
+    "kin", "kir", "kua", "kur", "lao", "lin", "lub", "lug", "mal", "mar", "mri", "mya", "nav",
+    "nbl", "nde", "ori", "orm", "oss", "que", "sag", "san", "sme", "sin", "smo", "sna", "snd",
+    "sot", "tah", "tam", "ssw", "tat", "tel", "tgk", "tir", "ton", "tsn", "tso", "uig", "ven",
+    "yor", "wol", "zul",
+];
 
 pub async fn list_languages(
     to: PackObject<()>,
