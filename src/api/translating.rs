@@ -79,13 +79,13 @@ pub async fn get(
     })))
 }
 
-const IGNORE_LANGGUAGES: [&str; 68] = [
+const IGNORE_LANGGUAGES: [&str; 70] = [
     "aar", "aka", "abk", "amh", "ava", "bak", "bam", "bod", "chv", "div", "dzo", "eus", "eve",
     "hat", "hau", "hye", "glv", "lim", "nya", "iii", "iku", "ibo", "kat", "kal", "khm", "kik",
     "kin", "kir", "kua", "kur", "lao", "lin", "lub", "lug", "mal", "mar", "mri", "mya", "nav",
     "nbl", "nde", "ori", "orm", "oss", "que", "sag", "san", "sme", "sin", "smo", "sna", "snd",
     "sot", "tah", "tam", "ssw", "tat", "tel", "tgk", "tir", "ton", "tsn", "tso", "uig", "ven",
-    "yor", "wol", "zul",
+    "yor", "wol", "zul", "run", "vol",
 ];
 
 pub async fn list_languages(
