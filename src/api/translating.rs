@@ -230,6 +230,7 @@ pub async fn create(
             vec![
                 "model".to_string(),
                 "updated_at".to_string(),
+                "progress".to_string(),
                 "error".to_string(),
             ],
         )
@@ -237,7 +238,8 @@ pub async fn create(
         .is_ok()
         && doc.model == model.to_string()
         && doc.error.is_empty()
-        && now - doc.updated_at < 3600 * 1000
+        && doc.progress == 100
+        && now - doc.updated_at < 600 * 1000
     {
         ctx.set("exists", true.into()).await;
         return Ok(to.with(SuccessResponse::new(TEOutput {
