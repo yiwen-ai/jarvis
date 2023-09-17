@@ -491,7 +491,7 @@ impl OpenAI {
             // should not happen for gpt-4
             model_name = MODEL_GPT_3_5_16K.to_string();
             (api_url, headers) = self.get_params(&model_name, rand_index);
-            req_body.max_tokens = Some(8192u16 - input_tokens);
+            req_body.max_tokens = Some(16380u16 - input_tokens);
             req_body.model = model_name.clone();
         }
 
@@ -529,7 +529,7 @@ impl OpenAI {
 
                 model_name = MODEL_GPT_3_5_16K.to_string();
                 (api_url, headers) = self.get_params(&model_name, rand_index);
-                req_body.max_tokens = Some(8192u16 - input_tokens);
+                req_body.max_tokens = Some(16380u16 - input_tokens);
                 req_body.model = model_name.clone();
 
                 ctx.set_kvs(vec![
