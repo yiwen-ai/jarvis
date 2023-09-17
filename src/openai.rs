@@ -474,7 +474,7 @@ impl OpenAI {
         let input_tokens = num_tokens_from_messages(&model_name, &prompt_messages).unwrap() as u16;
 
         let mut req_body = CreateChatCompletionRequestArgs::default()
-            .max_tokens(model.max_tokens() as u16 - input_tokens)
+            .max_tokens(model.max_tokens() as u16 - input_tokens - 8)
             .model(&model_name)
             .temperature(0.2f32)
             .top_p(0.9f32)
