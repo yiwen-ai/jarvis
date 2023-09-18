@@ -701,24 +701,40 @@ impl OpenAI {
                         }
 
                         "content_filter" => {
-                            return Err(HTTPError::new(
-                                452,
-                                "Content was triggered the filtering model".to_string(),
-                            ));
+                            return Err(HTTPError {
+                                code: 452,
+                                message: "Content was triggered the filtering model".to_string(),
+                                data: choice
+                                    .message
+                                    .content
+                                    .clone()
+                                    .map(serde_json::Value::String),
+                            });
                         }
 
                         "length" => {
-                            return Err(HTTPError::new(
-                                422,
-                                "Incomplete output due to max_tokens parameter".to_string(),
-                            ));
+                            return Err(HTTPError {
+                                code: 422,
+                                message: "Incomplete output due to max_tokens parameter"
+                                    .to_string(),
+                                data: choice
+                                    .message
+                                    .content
+                                    .clone()
+                                    .map(serde_json::Value::String),
+                            })
                         }
 
                         reason => {
-                            return Err(HTTPError::new(
-                                500,
-                                format!("Unknown finish reason: {}", reason),
-                            ));
+                            return Err(HTTPError {
+                                code: 500,
+                                message: format!("Unknown finish reason: {}", reason),
+                                data: choice
+                                    .message
+                                    .content
+                                    .clone()
+                                    .map(serde_json::Value::String),
+                            });
                         }
                     }
                 }
@@ -726,7 +742,7 @@ impl OpenAI {
                 Err(HTTPError {
                     code: 500,
                     message: format!("Unexpected choices: {}", rt.choices.len()),
-                    data: None,
+                    data: serde_json::to_value(rt).ok(),
                 })
             }
         }
