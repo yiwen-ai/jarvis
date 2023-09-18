@@ -1,4 +1,5 @@
 use axum::{extract::State, Extension};
+use finl_unicode::categories::CharacterCategories;
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Instant};
 use tokio::sync::{mpsc, Semaphore};
@@ -194,8 +195,9 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
     let mut progress = 0usize;
     let mut total_tokens = 00usize;
     let mut doc = db::Summarizing::with_pk(te.gid, te.cid, te.language, te.version);
+    let mut keywords_input = content[0].clone();
 
-    let output = if pieces == 1 && tokenizer::tokens_len(&content[0]) <= 100 {
+    let mut output = if pieces == 1 && tokenizer::tokens_len(&content[0]) <= 100 {
         content[0].replace('\n', ". ")
     } else {
         let semaphore = Arc::new(Semaphore::new(PARALLEL_WORKS));
@@ -287,10 +289,7 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
             res_list[0].to_owned()
         } else {
             // extract summary from all pieces and summarize again.
-            let mut res_list: Vec<String> = res_list
-                .into_iter()
-                .map(|s| extract_summary_keywords(&s).0)
-                .collect();
+            let mut res_list: Vec<String> = res_list;
             let mut tokens_list: Vec<usize> =
                 res_list.iter().map(|s| tokenizer::tokens_len(s)).collect();
             while tokens_list.len() > 2 && tokens_list.iter().sum::<usize>() > SUMMARIZE_HIGH_TOKENS
@@ -354,6 +353,48 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
             res.1
         }
     };
+
+    // get keywords
+    {
+        if pieces > 1 {
+            keywords_input = output.clone();
+        }
+        let ctx = ReqContext::new(rid.clone(), user, 0);
+        let res = app
+            .ai
+            .keywords(&ctx, te.language.to_name(), &keywords_input)
+            .await;
+        let ai_elapsed = ctx.start.elapsed().as_millis() as u64;
+        let kv = ctx.get_kv().await;
+
+        match res {
+            Err(err) => {
+                log::error!(target: "keywords",
+                    action = "call_openai",
+                    rid = ctx.rid,
+                    cid = te.cid.to_string(),
+                    language = te.language.to_639_3().to_string(),
+                    elapsed = ai_elapsed,
+                    piece_at = pieces,
+                    kv = log::as_serde!(kv);
+                    "{}", err.to_string(),
+                );
+            }
+            Ok(res) => {
+                total_tokens += res.0 as usize;
+                let keywords: Vec<&str> = res
+                    .1
+                    .trim()
+                    .split(char::is_punctuation)
+                    .filter_map(|s| match s.trim_matches(|c: char| !c.is_letter()) {
+                        "" => None,
+                        v => Some(v),
+                    })
+                    .collect();
+                output = keywords.join(", ") + "\n" + &output;
+            }
+        }
+    }
 
     // save target lang doc to db
     let mut cols = ColumnsMap::with_capacity(5);
