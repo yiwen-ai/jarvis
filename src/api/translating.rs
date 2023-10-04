@@ -24,6 +24,7 @@ pub struct TranslatingInput {
     pub version: u16,
 
     pub model: Option<String>,
+    pub context: Option<String>,
     pub content: Option<PackObject<Vec<u8>>>,
 }
 
@@ -268,6 +269,7 @@ pub async fn create(
             language: target_language,
             content,
         },
+        input.context.unwrap_or_default(),
         detected_language,
         model,
     ));
@@ -283,6 +285,7 @@ async fn translate(
     rid: String,
     user: xid::Id,
     te: TEParams,
+    context: String,
     origin_language: Language,
     model: openai::AIModel,
 ) {
@@ -315,12 +318,20 @@ async fn translate(
         let model = model.clone();
         let tx = tx.clone();
         let sem = semaphore.clone();
+        let context = context.clone();
         tokio::spawn(async move {
             if let Ok(permit) = sem.acquire().await {
                 let ctx = ReqContext::new(rid, user, 0);
                 match app
                     .ai
-                    .translate(&ctx, &model, origin, lang, &unit.to_translating_list())
+                    .translate(
+                        &ctx,
+                        &model,
+                        &context,
+                        origin,
+                        lang,
+                        &unit.to_translating_list(),
+                    )
                     .await
                 {
                     Ok((used_tokens, content)) => {
