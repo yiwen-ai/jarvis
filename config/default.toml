@@ -26,6 +26,18 @@ password = ""
 url = "http://127.0.0.1:6334"
 api_key = ""
 
+[redis]
+# Redis server address
+host = "127.0.0.1"
+# Redis server port
+port = 6379
+# Redis server username
+username = ""
+# Redis server password
+password = ""
+# The maximum number of connections managed by the pool, should > 0.
+max_connections = 10
+
 [ai.agent]
 client_pem_file = ""
 client_root_cert_file = ""

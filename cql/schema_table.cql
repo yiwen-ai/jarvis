@@ -51,4 +51,4 @@ CREATE TABLE IF NOT EXISTS embedding (
     AND compression = {'sstable_compression': 'LZ4Compressor'}
     AND default_time_to_live = 0;
 
-CREATE INDEX embedding_gid ON embedding (cid);
+CREATE INDEX embedding_cid ON embedding (cid);

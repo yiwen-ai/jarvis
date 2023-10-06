@@ -41,6 +41,12 @@ pub async fn new(cfg: conf::Conf) -> anyhow::Result<(Arc<api::AppState>, Router)
                 ),
         )
         .nest(
+            "/v1/message/translating",
+            Router::new()
+                .route("/", routing::post(api::message_translating::create))
+                .route("/get", routing::post(api::message_translating::get)),
+        )
+        .nest(
             "/v1/summarizing",
             Router::new()
                 .route("/", routing::post(api::summarizing::create))
@@ -70,11 +76,13 @@ async fn new_app_state(cfg: conf::Conf) -> anyhow::Result<api::AppState> {
     };
     let scylla = db::scylladb::ScyllaDB::new(cfg.scylla, keyspace).await?;
     let qdrant = db::qdrant::Qdrant::new(cfg.qdrant, keyspace).await?;
+    let redis = db::redis::Redis::new(cfg.redis).await?;
     Ok(api::AppState {
         ld: Arc::new(ld),
         ai: Arc::new(ai),
         scylla: Arc::new(scylla),
         qdrant: Arc::new(qdrant),
+        redis: Arc::new(redis),
         translating: Arc::new("translating".to_string()),
         embedding: Arc::new("embedding".to_string()),
     })

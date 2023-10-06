@@ -10,6 +10,7 @@ use crate::lang::LanguageDetector;
 use crate::openai;
 
 pub mod embedding;
+pub mod message_translating;
 pub mod summarizing;
 pub mod translating;
 
@@ -38,6 +39,7 @@ pub struct AppState {
     pub ld: Arc<LanguageDetector>,
     pub ai: Arc<openai::OpenAI>,
     pub scylla: Arc<db::scylladb::ScyllaDB>,
+    pub redis: Arc<db::redis::Redis>,
     pub qdrant: Arc<qdrant::Qdrant>,
     pub translating: Arc<String>, // keep the number of concurrent translating tasks
     pub embedding: Arc<String>,   // keep the number of concurrent embedding tasks

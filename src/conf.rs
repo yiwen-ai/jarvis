@@ -63,12 +63,22 @@ pub struct AI {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct Redis {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: String,
+    pub max_connections: u16,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Conf {
     pub env: String,
     pub log: Log,
     pub server: Server,
     pub scylla: ScyllaDB,
     pub qdrant: Qdrant,
+    pub redis: Redis,
     pub ai: AI,
 }
 

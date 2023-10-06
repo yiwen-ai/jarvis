@@ -3,6 +3,7 @@ mod model_summarizing;
 mod model_translating;
 
 pub mod qdrant;
+pub mod redis;
 pub mod scylladb;
 
 pub use model_embedding::Embedding;

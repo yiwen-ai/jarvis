@@ -25,6 +25,7 @@ pub struct TranslatingInput {
 
     pub model: Option<String>,
     pub context: Option<String>,
+    pub from_language: Option<PackObject<Language>>,
     pub content: Option<PackObject<Vec<u8>>>,
 }
 
@@ -212,13 +213,17 @@ pub async fn create(
         ));
     }
 
-    let detected_language = app.ld.detect_lang(&content.detect_lang_string());
-    if detected_language == target_language {
+    let mut from_language = input.from_language.unwrap_or_default().unwrap();
+    if from_language == Language::Und {
+        from_language = app.ld.detect_lang(&content.detect_lang_string());
+    }
+
+    if from_language == target_language || from_language == Language::Und {
         return Err(HTTPError::new(
             400,
             format!(
-                "No need to translate from '{}' to '{}'",
-                detected_language, target_language
+                "can not translate from '{}' to '{}'",
+                from_language, target_language
             ),
         ));
     }
@@ -245,7 +250,7 @@ pub async fn create(
         ctx.set("exists", true.into()).await;
         return Ok(to.with(SuccessResponse::new(TEOutput {
             cid: to.with(cid),
-            detected_language: to.with(detected_language),
+            detected_language: to.with(from_language),
         })));
     }
 
@@ -270,13 +275,13 @@ pub async fn create(
             content,
         },
         input.context.unwrap_or_default(),
-        detected_language,
+        from_language,
         model,
     ));
 
     Ok(to.with(SuccessResponse::new(TEOutput {
         cid: to.with(cid),
-        detected_language: to.with(detected_language),
+        detected_language: to.with(from_language),
     })))
 }
 
