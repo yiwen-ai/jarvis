@@ -56,7 +56,7 @@ pub async fn search(
         return Ok(to.with(SuccessResponse::new(vec![])));
     }
 
-    let rctx = ctx.as_ref().clone();
+    let rctx = ctx.as_ref();
     let embedding_res = app
         .ai
         .embedding(rctx, &vec![q.clone()])

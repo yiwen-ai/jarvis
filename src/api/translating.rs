@@ -316,7 +316,7 @@ async fn translate(
         mpsc::channel::<(usize, ReqContext, Result<(u32, TEContentList), HTTPError>)>(pieces);
     for (i, unit) in content.into_iter().enumerate() {
         let rid = rid.clone();
-        let user = user;
+        let user = user.clone();
         let app = app.clone();
         let origin = origin_language.to_name();
         let lang = te.language.to_name();
@@ -418,8 +418,8 @@ async fn translate(
 
     // save target lang doc to db
     let content = cbor_to_vec(&content_list);
-    if content.is_err() {
-        let err = content.unwrap_err().to_string();
+    if let Err(err) = content {
+        let err = err.to_string();
         let mut cols = ColumnsMap::with_capacity(2);
         cols.set_as("updated_at", &(unix_ms() as i64));
         cols.set_as("error", &err);
