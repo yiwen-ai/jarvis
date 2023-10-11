@@ -206,7 +206,6 @@ async fn summarize(app: Arc<AppState>, rid: String, user: xid::Id, te: TEParams)
 
         for (i, text) in content.into_iter().enumerate() {
             let rid = rid.clone();
-            let user = user.clone();
             let app = app.clone();
             let lang = te.language.to_name();
             let tx = tx.clone();

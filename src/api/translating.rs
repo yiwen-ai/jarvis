@@ -316,7 +316,6 @@ async fn translate(
         mpsc::channel::<(usize, ReqContext, Result<(u32, TEContentList), HTTPError>)>(pieces);
     for (i, unit) in content.into_iter().enumerate() {
         let rid = rid.clone();
-        let user = user.clone();
         let app = app.clone();
         let origin = origin_language.to_name();
         let lang = te.language.to_name();

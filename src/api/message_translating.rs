@@ -36,6 +36,10 @@ pub struct MessageTranslatingOutput {
     pub content: PackObject<Vec<u8>>,
 }
 
+fn mt_key(id: &xid::Id, lang: &Language, ver: u16) -> String {
+    format!("MT:{}:{}:{}", id, lang.to_639_3(), ver)
+}
+
 pub async fn get(
     State(app): State<Arc<AppState>>,
     Extension(ctx): Extension<Arc<ReqContext>>,
@@ -55,7 +59,7 @@ pub async fn get(
     ])
     .await;
 
-    let key = format!("MT:{}:{}:{}", id, language.to_639_3(), input.version);
+    let key = mt_key(&id, &language, input.version);
     let data = app
         .redis
         .get_data(&key)
@@ -122,22 +126,22 @@ pub async fn create(
         ));
     }
 
-    let key = format!("MT:{}:{}:{}", id, target_language.to_639_3(), input.version);
+    let key = mt_key(&id, &target_language, input.version);
     if let Ok(data) = app.redis.get_data(&key).await {
         ctx.set("exists", true.into()).await;
-        let output: MessageTranslatingOutput = cbor_from_slice(&data).map_err(|e| HTTPError {
+        let doc: MessageTranslatingOutput = cbor_from_slice(&data).map_err(|e| HTTPError {
             code: 500,
             message: format!("Invalid content: {}", e),
             data: None,
         })?;
-        return Ok(to.with(SuccessResponse::new(output)));
+        return Ok(to.with(SuccessResponse::new(doc)));
     }
 
-    let output = MessageTranslatingOutput {
+    let doc = MessageTranslatingOutput {
         model: model.to_string(),
         ..Default::default()
     };
-    let data = cbor_to_vec(&content).map_err(|e| HTTPError {
+    let data = cbor_to_vec(&doc).map_err(|e| HTTPError {
         code: 500,
         message: format!("Invalid content: {}", e),
         data: None,
@@ -145,7 +149,7 @@ pub async fn create(
 
     match app.redis.new_data(&key, data, 600 * 1000).await {
         Err(err) => Err(HTTPError::new(500, err.to_string())),
-        Ok(false) => Ok(to.with(SuccessResponse::new(output))),
+        Ok(false) => Ok(to.with(SuccessResponse::new(doc))),
         Ok(true) => {
             tokio::spawn(translate(
                 app,
@@ -161,7 +165,7 @@ pub async fn create(
                 from_language,
                 model,
             ));
-            Ok(to.with(SuccessResponse::new(output)))
+            Ok(to.with(SuccessResponse::new(doc)))
         }
     }
 }
@@ -203,7 +207,6 @@ async fn translate(
         mpsc::channel::<(usize, ReqContext, Result<(u32, TEContentList), HTTPError>)>(pieces);
     for (i, unit) in content.into_iter().enumerate() {
         let rid = rid.clone();
-        let user = user.clone();
         let app = app.clone();
         let origin = origin_language.to_name();
         let lang = te.language.to_name();
@@ -244,7 +247,7 @@ async fn translate(
 
     let mut total_tokens: usize = 0;
     let mut progress = 0usize;
-    let key = format!("MT:{}:{}:{}", te.id, te.language.to_639_3(), te.version);
+    let key = mt_key(&te.id, &te.language, te.version as u16);
     let mut doc = MessageTranslatingOutput {
         model: model.to_string(),
         ..Default::default()
@@ -310,8 +313,7 @@ async fn translate(
 
     // save target lang doc to db
     let content = cbor_to_vec(&content_list);
-    if content.is_err() {
-        let err = content.unwrap_err().to_string();
+    if let Err(err) = content {
         doc.error = err.to_string();
         doc.progress = 0;
         if let Ok(data) = cbor_to_vec(&doc) {
