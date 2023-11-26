@@ -97,7 +97,7 @@ pub async fn list_languages(
     let languages = isolang::languages();
     let mut list: Vec<(String, String, String)> = Vec::new();
     for lg in languages {
-        if lg.to_639_1().is_none() || lg.to_autonym().is_none() {
+        if lg.to_639_1().is_none() || lg.to_autonym().is_none() || !lg.to_name().is_ascii() {
             continue;
         }
 

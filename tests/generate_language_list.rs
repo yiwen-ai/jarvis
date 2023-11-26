@@ -12,7 +12,7 @@ fn generated_language_list_if_outdated() {
     let languages = isolang::languages();
     let mut list: Vec<Lang> = Vec::new();
     for lg in languages {
-        if lg.to_639_1().is_none() || lg.to_autonym().is_none() {
+        if lg.to_639_1().is_none() || lg.to_autonym().is_none() || !lg.to_name().is_ascii() {
             continue;
         }
         let name = lg.to_name();

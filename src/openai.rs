@@ -8,7 +8,7 @@ use axum::http::header::{HeaderMap, HeaderName};
 use libflate::gzip::Encoder;
 use reqwest::{header, Client, ClientBuilder, Identity, Response};
 use serde::{de::DeserializeOwned, Serialize};
-use std::{collections::HashMap, path::Path, str::FromStr, string::ToString};
+use std::{path::Path, str::FromStr, string::ToString};
 use tiktoken_rs::{num_tokens_from_messages, ChatCompletionRequestMessage};
 use tokio::time::Duration;
 
@@ -27,11 +27,13 @@ static APP_USER_AGENT: &str = concat!(
 
 static X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
+// GPT-3.5-Turbo-1106 has a max context window of 16,385 tokens and can generate 4,096 output tokens.
 const AI_MODEL_GPT_3_5: &str = "gpt-3.5"; // gpt-35-turbo, 4096
+
+// GPT-4 Turbo Preview has a max context window of 128,000 tokens and can generate 4,096 output tokens
 const AI_MODEL_GPT_4: &str = "gpt-4"; // 8192
 
 const MODEL_EMBEDDING: &str = "text-embedding-ada-002"; // 8191
-const MODEL_GPT_3_5_16K: &str = "gpt-3.5-turbo-16k"; // 16384
 const MODEL_GPT_3_5: &str = "gpt-3.5-turbo"; // 4096
 const MODEL_GPT_4: &str = "gpt-4"; // 8192
 
@@ -59,15 +61,15 @@ impl AIModel {
     // return (recommend, high)
     pub fn translating_segment_tokens(&self) -> (usize, usize) {
         match self {
-            AIModel::GPT3_5 => (1000, 1300),
-            AIModel::GPT4 => (2000, 2600),
+            AIModel::GPT3_5 => (2400, 3000),
+            AIModel::GPT4 => (2400, 3000),
         }
     }
 
     pub fn max_tokens(&self) -> usize {
         match self {
             AIModel::GPT3_5 => 4096,
-            AIModel::GPT4 => 8192,
+            AIModel::GPT4 => 4096,
         }
     }
 }
@@ -94,7 +96,6 @@ impl ToString for AIModel {
 
 pub struct OpenAI {
     client: Client,
-    tokens_rate: HashMap<String, f32>,
     openai: APIParams,
     azureais: Vec<APIParams>,
 }
@@ -103,7 +104,6 @@ struct APIParams {
     headers: header::HeaderMap,
     embedding_url: Option<reqwest::Url>,
     chat_url: Option<reqwest::Url>,
-    large_chat_url: Option<reqwest::Url>,
     gpt4_chat_url: Option<reqwest::Url>,
 }
 
@@ -147,12 +147,10 @@ impl OpenAI {
 
         let mut openai = Self {
             client,
-            tokens_rate: opts.tokens_rate,
             openai: APIParams {
                 headers: openai_headers,
                 embedding_url: agent.join("/v1/embeddings").ok(),
                 chat_url: agent.join("/v1/chat/completions").ok(),
-                large_chat_url: None,
                 gpt4_chat_url: None,
             },
             azureais: Vec::with_capacity(opts.azureais.len()),
@@ -190,16 +188,6 @@ impl OpenAI {
                         ))
                         .ok()
                 },
-                large_chat_url: if cfg.large_chat_model.is_empty() {
-                    None
-                } else {
-                    agent
-                        .join(&format!(
-                            "/openai/deployments/{}/chat/completions?api-version={}",
-                            cfg.large_chat_model, cfg.api_version
-                        ))
-                        .ok()
-                },
                 gpt4_chat_url: if cfg.gpt4_chat_model.is_empty() {
                     None
                 } else {
@@ -214,10 +202,6 @@ impl OpenAI {
         }
 
         openai
-    }
-
-    fn get_tokens_rate(&self, from: &str, to: &str) -> f32 {
-        self.tokens_rate.get(to).unwrap_or(&1.2) / self.tokens_rate.get(from).unwrap_or(&1.2)
     }
 
     fn get_params(
@@ -235,11 +219,6 @@ impl OpenAI {
                 .azureais
                 .iter()
                 .filter_map(|p| p.chat_url.as_ref().map(|u| (u, &p.headers)))
-                .collect(),
-            MODEL_GPT_3_5_16K => self
-                .azureais
-                .iter()
-                .filter_map(|p| p.large_chat_url.as_ref().map(|u| (u, &p.headers)))
                 .collect(),
             MODEL_GPT_4 => self
                 .azureais
@@ -475,13 +454,13 @@ impl OpenAI {
             format!("{} and {} languages", origin_lang, target_lang)
         };
 
-        let mut model_name = model.openai_name();
+        let model_name = model.openai_name();
         let mut rand_index = rand::random::<u32>() as usize + 1;
         let (mut api_url, mut headers) = self.get_params(&model_name, rand_index);
         let context = if context.is_empty() {
             "not provide.".to_string()
         } else {
-            context.replace(['\n', '\r'], " ")
+            context.replace(['\n', '\r'], ". ")
         };
 
         let messages = vec![
@@ -508,7 +487,7 @@ impl OpenAI {
         let input_tokens = num_tokens_from_messages(&model_name, &prompt_messages).unwrap() as u16;
 
         let mut req_body = CreateChatCompletionRequestArgs::default()
-            .max_tokens(model.max_tokens() as u16 - input_tokens - 8)
+            .max_tokens(model.max_tokens() as u16)
             .model(&model_name)
             .temperature(0.2f32)
             .top_p(0.9f32)
@@ -519,22 +498,11 @@ impl OpenAI {
             req_body.user = Some(ctx.user.to_string())
         }
 
-        let tokens_rate = self.get_tokens_rate(origin_lang, target_lang);
-        if req_body.max_tokens.unwrap() < (input_tokens as f32 * tokens_rate) as u16 {
-            // only for gpt-3.5, run with gpt-3.5-16k
-            // should not happen for gpt-4
-            model_name = MODEL_GPT_3_5_16K.to_string();
-            (api_url, headers) = self.get_params(&model_name, rand_index);
-            req_body.max_tokens = Some(16380u16 - input_tokens);
-            req_body.model = model_name.clone();
-        }
-
         ctx.set_kvs(vec![
             ("origin_lang", origin_lang.into()),
             ("target_lang", target_lang.into()),
             ("input_tokens", input_tokens.into()),
             ("max_tokens", req_body.max_tokens.into()),
-            ("tokens_rate", tokens_rate.into()),
             ("model", model_name.clone().into()),
             (
                 "host",
@@ -553,29 +521,6 @@ impl OpenAI {
 
         match Self::check_chat_response(res) {
             Ok(rt) => Ok(rt),
-            Err(err) if err.code == 422 => {
-                // only for gpt-3.5, run with gpt-3.5-16k
-                // should not happen for gpt-4
-                if input_tokens * 3 <= req_body.max_tokens.unwrap() {
-                    // some language unsupported.
-                    return Err(err);
-                }
-
-                model_name = MODEL_GPT_3_5_16K.to_string();
-                (api_url, headers) = self.get_params(&model_name, rand_index);
-                req_body.max_tokens = Some(16380u16 - input_tokens);
-                req_body.model = model_name.clone();
-
-                ctx.set_kvs(vec![
-                    ("retry_max_tokens", req_body.max_tokens.into()),
-                    ("model", model_name.clone().into()),
-                ])
-                .await;
-                Self::check_chat_response(
-                    self.request(ctx, api_url.clone(), headers.clone(), &req_body)
-                        .await,
-                )
-            }
             Err(err) if err.code == 429 || err.code > 500 => {
                 ctx.set("retry_because", err.to_string().into()).await;
                 rand_index += 1;
@@ -606,7 +551,7 @@ impl OpenAI {
         text: &str,
     ) -> Result<CreateChatCompletionResponse, HTTPError> {
         let model = AIModel::GPT3_5;
-        let mut model_name = model.openai_name();
+        let model_name = model.openai_name();
         let mut rand_index = rand::random::<u32>() as usize + 1;
         let (mut api_url, mut headers) = self.get_params(&model_name, rand_index);
         let messages = vec![
@@ -642,13 +587,6 @@ impl OpenAI {
             .map_err(HTTPError::with_500)?;
         if !ctx.user.is_zero() {
             req_body.user = Some(ctx.user.to_string())
-        }
-
-        if req_body.max_tokens.unwrap() + input_tokens > model.max_tokens() as u16 {
-            model_name = MODEL_GPT_3_5_16K.to_string();
-            (api_url, headers) = self.get_params(&model_name, rand_index);
-            req_body.model = model_name.clone();
-            req_body.max_tokens = Some(input_tokens);
         }
 
         ctx.set_kvs(vec![

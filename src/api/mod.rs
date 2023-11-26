@@ -23,8 +23,8 @@ pub(crate) static PARALLEL_WORKS: usize = 8;
 static SECTION_SEPARATOR: &str = "------";
 
 // gpt-35-turbo, 4096
-static SUMMARIZE_SECTION_TOKENS: usize = 2000;
-pub(crate) static SUMMARIZE_HIGH_TOKENS: usize = 2800;
+static SUMMARIZE_SECTION_TOKENS: usize = 10000;
+pub(crate) static SUMMARIZE_HIGH_TOKENS: usize = 12000;
 
 // text-embedding-ada-002, 8191
 // https://community.openai.com/t/embedding-text-length-vs-accuracy/96564
