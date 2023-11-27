@@ -311,9 +311,7 @@ impl OpenAI {
                 Err(er) => {
                     ctx.set_kvs(vec![
                         ("json_fixed", false.into()),
-                        ("json_input", text.clone().into()),
-                        ("json_output", oc.clone().into()),
-                        ("json_error", er.into()),
+                        ("json_fix_error", er.into()),
                     ])
                     .await;
                 }
@@ -492,8 +490,8 @@ impl OpenAI {
         let mut req_body = CreateChatCompletionRequestArgs::default()
             .max_tokens(model.max_tokens() as u16)
             .model(&model_name)
-            .temperature(0.2f32)
-            .top_p(0.9f32)
+            .temperature(0.1f32)
+            .top_p(0.618f32)
             .messages(messages)
             .build()
             .map_err(HTTPError::with_500)?;
@@ -586,8 +584,8 @@ impl OpenAI {
 
         let mut req_body = CreateChatCompletionRequestArgs::default()
             .max_tokens(800u16)
-            .temperature(0.3f32)
-            .top_p(0.95f32)
+            .temperature(0.382f32)
+            .top_p(0.618f32)
             .model(&model_name)
             .messages(messages)
             .build()
@@ -723,8 +721,8 @@ impl OpenAI {
 
         let mut req_body = CreateChatCompletionRequestArgs::default()
             .max_tokens(256u16)
-            .temperature(0.7f32)
-            .top_p(1f32)
+            .temperature(0.1f32)
+            .top_p(0.618f32)
             .model(&model_name)
             .messages(messages)
             .build()

@@ -58,6 +58,7 @@ impl RawJSONArray {
         }
     }
 
+    // return error message if failed
     fn array(&mut self) -> Option<String> {
         self.result.push('[');
         self.offset += 1;
@@ -102,7 +103,9 @@ impl RawJSONArray {
 
             self.skip_space();
             if self.offset >= self.chars.len() {
-                return Some("no token to scan in array".to_string());
+                self.result.push(']');
+                self.offset += 1;
+                return None;
             }
 
             match self.chars[self.offset] {
@@ -314,6 +317,19 @@ mod tests {
                 err: None,
             },
             Case {
+                input: r#"[
+                    [],
+                    [
+                        ""] Stream: ["
+                    ],
+                    [
+                        "Internet Engineering Task Force \(IETF)"
+                ]"#
+                .to_string(),
+                output: r#"[[],["] Stream: ["],["Internet Engineering Task Force \\(IETF)"]]"#.to_string(),
+                err: None,
+            },
+            Case {
                 input: r#"[["作为UTF-8 [","RFC3629",""]编码的文本字符串（","第2节", "）。字符串中的字节数等于参数。包含无效UTF-8序列的字符串是格式良好但无效的（","第1.2节", "）。此类型适用于需要解释或显示人类可读文本的系统，并允许区分结构化字节和具有指定曲目（Unicode）和编码（UTF-8）的文本。与JSON等格式不同，此类型中的Unicode字符永远不会被转义。因此，换行符（U+000A）始终表示为字符串中的字节0x0a，而不是字符0x5c6e（字符“\”和“n”）或0x5c7530303061（字符“\”，“u”，“0”，“0”，“0”和“a”）。","¶"]]"#
                 .to_string(),
                 output: r#"[["作为UTF-8 [","RFC3629","]编码的文本字符串（","第2节","）。字符串中的字节数等于参数。包含无效UTF-8序列的字符串是格式良好但无效的（","第1.2节","）。此类型适用于需要解释或显示人类可读文本的系统，并允许区分结构化字节和具有指定曲目（Unicode）和编码（UTF-8）的文本。与JSON等格式不同，此类型中的Unicode字符永远不会被转义。因此，换行符（U+000A）始终表示为字符串中的字节0x0a，而不是字符0x5c6e（字符“\\”和“n”）或0x5c7530303061（字符“\\”，“u”，“0”，“0”，“0”和“a”）。","¶"]]"#.to_string(),
@@ -333,7 +349,7 @@ mod tests {
                     assert_eq!(val, case.output);
                 }
                 Err(err) => {
-                    // println!("FIX_ERR:  `{}` => `{}`", case.input, err);
+                    println!("FIX_ERR:  `{}` => `{}`", case.input, err);
                     assert!(case.err.is_some());
                     assert!(err.contains::<&str>(case.err.unwrap().as_ref()));
                 }
