@@ -58,6 +58,18 @@ impl RawJSONArray {
         }
     }
 
+    fn skip_space_v(&self) -> usize {
+        let mut offset = self.offset;
+        while offset < self.chars.len() {
+            if self.chars[offset].is_whitespace() {
+                offset += 1;
+            } else {
+                break;
+            }
+        }
+        return offset;
+    }
+
     // return error message if failed
     fn array(&mut self) -> Option<String> {
         self.result.push('[');
@@ -110,9 +122,15 @@ impl RawJSONArray {
 
             match self.chars[self.offset] {
                 ',' => {
-                    self.result.push(',');
                     self.offset += 1;
                     self.skip_space();
+                    if self.offset < self.chars.len() && self.chars[self.offset] == ']' {
+                        self.result.push(']');
+                        self.offset += 1;
+                        return None;
+                    } else {
+                        self.result.push(',');
+                    }
                 }
                 ']' => {
                     self.result.push(']');
@@ -200,6 +218,20 @@ impl RawJSONArray {
                             self.offset += 1;
                         }
                     }
+                }
+                ']' => {
+                    self.offset += 1;
+                    let offset = self.skip_space_v();
+                    if offset >= self.chars.len()
+                        || (offset <= self.chars.len() - 1
+                            && (self.chars[offset] == ',' || self.chars[offset] == ']'))
+                    {
+                        self.result.push('"');
+                        self.offset -= 1;
+                        return None;
+                    }
+
+                    self.result.push(']');
                 }
                 _ => {
                     self.result.push(self.chars[self.offset]);
@@ -327,6 +359,33 @@ mod tests {
                 ]"#
                 .to_string(),
                 output: r#"[[],["] Stream: ["],["Internet Engineering Task Force \\(IETF)"]]"#.to_string(),
+                err: None,
+            },
+            Case {
+                input: r#"[
+                    [],
+                    [
+                        ""] Stream: ["
+                    ],
+                    [
+                        "Internet Engineering Task Force \(IETF)"
+                    ],
+                ]"#
+                .to_string(),
+                output: r#"[[],["] Stream: ["],["Internet Engineering Task Force \\(IETF)"]]"#.to_string(),
+                err: None,
+            },
+            Case {
+                input: r#"[
+                    [],
+                    [
+                        ""] Stream: ["
+                    ],
+                    [
+                        "Internet Engineering Task Force \(IETF)1]
+                ]"#
+                .to_string(),
+                output: r#"[[],["] Stream: ["],["Internet Engineering Task Force \\(IETF)1"]]"#.to_string(),
                 err: None,
             },
             Case {
