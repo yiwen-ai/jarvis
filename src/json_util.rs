@@ -50,7 +50,7 @@ impl RawJSONArray {
 
     fn skip_space(&mut self) {
         while self.offset < self.chars.len() {
-            if self.chars[self.offset].is_whitespace() {
+            if self.chars[self.offset].is_whitespace() || self.chars[self.offset].is_control() {
                 self.offset += 1;
             } else {
                 break;
@@ -61,7 +61,7 @@ impl RawJSONArray {
     fn skip_space_v(&self) -> usize {
         let mut offset = self.offset;
         while offset < self.chars.len() {
-            if self.chars[offset].is_whitespace() {
+            if self.chars[offset].is_whitespace() || self.chars[self.offset].is_control() {
                 offset += 1;
             } else {
                 break;
@@ -234,7 +234,10 @@ impl RawJSONArray {
                     self.result.push(']');
                 }
                 _ => {
-                    self.result.push(self.chars[self.offset]);
+                    let c = self.chars[self.offset];
+                    if !c.is_control() {
+                        self.result.push(c);
+                    }
                     self.offset += 1;
                 }
             }
@@ -273,8 +276,8 @@ mod tests {
                 err: None,
             },
             Case {
-                input: r#"[" "]"#.to_string(),
-                output: r#"[" "]"#.to_string(),
+                input: r#"[" ❤️‍🔥🧑‍🤝‍🧑"]"#.to_string(),
+                output: r#"[" ❤️‍🔥🧑‍🤝‍🧑"]"#.to_string(),
                 err: None,
             },
             Case {
@@ -330,7 +333,7 @@ mod tests {
                 err: None,
             },
             Case {
-                input: r#"["\ "]"#.to_string(),
+                input: r#"["\ "]"#.to_string(), // with a control char
                 output: r#"["\\ "]"#.to_string(),
                 err: None,
             },

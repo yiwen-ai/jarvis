@@ -10,7 +10,7 @@ use reqwest::{header, Client, ClientBuilder, Identity, Response};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{path::Path, str::FromStr, string::ToString};
 use tiktoken_rs::{num_tokens_from_messages, ChatCompletionRequestMessage};
-use tokio::time::Duration;
+use tokio::time::{sleep, Duration};
 
 use crate::conf::AI;
 use crate::json_util::RawJSONArray;
@@ -61,8 +61,8 @@ impl AIModel {
     // return (recommend, high)
     pub fn translating_segment_tokens(&self) -> (usize, usize) {
         match self {
-            AIModel::GPT3_5 => (3000, 3400),
-            AIModel::GPT4 => (3000, 3400),
+            AIModel::GPT3_5 => (3000, 3200),
+            AIModel::GPT4 => (3000, 3200),
         }
     }
 
@@ -260,19 +260,12 @@ impl OpenAI {
             total_tokens: 0,
         });
 
-        let real_tokens_rate: f32 = if usage.prompt_tokens > 1000 {
-            usage.completion_tokens as f32 / (usage.prompt_tokens as f32 - 90f32)
-        } else {
-            1.0f32
-        };
-
         let elapsed = ctx.start.elapsed().as_millis() as u32;
         ctx.set_kvs(vec![
             ("elapsed", elapsed.into()),
             ("prompt_tokens", usage.prompt_tokens.into()),
             ("completion_tokens", usage.completion_tokens.into()),
             ("total_tokens", usage.total_tokens.into()),
-            ("real_tokens_rate", real_tokens_rate.into()),
             ("speed", (usage.total_tokens * 1000 / elapsed).into()),
         ])
         .await;
@@ -523,6 +516,7 @@ impl OpenAI {
         match Self::check_chat_response(res) {
             Ok(rt) => Ok(rt),
             Err(err) if err.code == 429 || err.code > 500 => {
+                sleep(Duration::from_secs(3)).await;
                 ctx.set("retry_because", err.to_string().into()).await;
                 rand_index += 1;
                 (api_url, headers) = self.get_params(&model_name, rand_index);
@@ -616,6 +610,7 @@ impl OpenAI {
         match Self::check_chat_response(res) {
             Ok(rt) => Ok(rt),
             Err(err) if err.code == 429 || err.code > 500 => {
+                sleep(Duration::from_secs(3)).await;
                 ctx.set("retry_because", err.to_string().into()).await;
                 rand_index += 1;
                 (api_url, headers) = self.get_params(&model_name, rand_index);
@@ -654,11 +649,7 @@ impl OpenAI {
                             return Err(HTTPError {
                                 code: 452,
                                 message: "Content was triggered the filtering model".to_string(),
-                                data: choice
-                                    .message
-                                    .content
-                                    .clone()
-                                    .map(serde_json::Value::String),
+                                data: serde_json::to_value(rt).ok(),
                             });
                         }
 
@@ -667,11 +658,7 @@ impl OpenAI {
                                 code: 422,
                                 message: "Incomplete output due to max_tokens parameter"
                                     .to_string(),
-                                data: choice
-                                    .message
-                                    .content
-                                    .clone()
-                                    .map(serde_json::Value::String),
+                                data: serde_json::to_value(rt).ok(),
                             })
                         }
 
@@ -679,11 +666,7 @@ impl OpenAI {
                             return Err(HTTPError {
                                 code: 500,
                                 message: format!("Unknown finish reason: {}", reason),
-                                data: choice
-                                    .message
-                                    .content
-                                    .clone()
-                                    .map(serde_json::Value::String),
+                                data: serde_json::to_value(rt).ok(),
                             });
                         }
                     }
@@ -752,6 +735,7 @@ impl OpenAI {
         match Self::check_chat_response(res) {
             Ok(rt) => Ok(rt),
             Err(err) if err.code == 429 || err.code > 500 => {
+                sleep(Duration::from_secs(3)).await;
                 ctx.set("retry_because", err.to_string().into()).await;
                 rand_index += 1;
                 (api_url, headers) = self.get_params(&model_name, rand_index);
