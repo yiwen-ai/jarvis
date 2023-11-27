@@ -1,6 +1,5 @@
 use config::{Config, ConfigError, File, FileFormat};
 use serde::Deserialize;
-use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Log {
@@ -37,7 +36,6 @@ pub struct AzureAI {
     pub api_version: String,
     pub embedding_model: String,
     pub chat_model: String,
-    pub large_chat_model: String,
     pub gpt4_chat_model: String,
 }
 
@@ -57,7 +55,6 @@ pub struct Agent {
 #[derive(Debug, Deserialize, Clone)]
 pub struct AI {
     pub agent: Agent,
-    pub tokens_rate: HashMap<String, f32>,
     pub openai: OpenAI,
     pub azureais: Vec<AzureAI>,
 }
