@@ -137,12 +137,16 @@ impl RawJSONArray {
                     self.offset += 1;
                     return None;
                 }
-                _ => {
-                    return Some(format!(
-                        "unsupport token `{}{}` to end in array",
-                        self.chars[self.offset - 1],
-                        self.chars[self.offset]
-                    ));
+                c => {
+                    if c == '[' && self.result.last() == Some(&']') {
+                        self.result.push(',');
+                    } else {
+                        return Some(format!(
+                            "unsupport token `{}{}` to end in array",
+                            self.chars[self.offset - 1],
+                            c
+                        ));
+                    }
                 }
             }
         }
@@ -153,7 +157,7 @@ impl RawJSONArray {
     fn can_not_end_text(&self) -> bool {
         let mut i = self.offset;
         while i < self.chars.len() {
-            if self.chars[i].is_whitespace() {
+            if self.chars[i].is_whitespace() || self.chars[self.offset].is_control() {
                 i += 1;
                 continue;
             }
@@ -233,8 +237,7 @@ impl RawJSONArray {
 
                     self.result.push(']');
                 }
-                _ => {
-                    let c = self.chars[self.offset];
+                c => {
                     if !c.is_control() {
                         self.result.push(c);
                     }
@@ -343,6 +346,20 @@ mod tests {
                     [
                         ""] Stream: ["
                     ],
+                    [
+                        "Internet Engineering Task Force \(IETF)"
+                    ]
+                ]"#
+                .to_string(),
+                output: r#"[[],["] Stream: ["],["Internet Engineering Task Force \\(IETF)"]]"#.to_string(),
+                err: None,
+            },
+            Case {
+                input: r#"[
+                    [],
+                    [
+                        ""] Stream: ["
+                    ]
                     [
                         "Internet Engineering Task Force \(IETF)"
                     ]
