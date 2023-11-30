@@ -456,7 +456,7 @@ impl OpenAI {
 
         let system_message = ChatCompletionRequestMessageArgs::default()
         .role(Role::System)
-        .content(format!("Guidelines:\n- Become proficient in {languages}.\n- Instead of prompts, user input is a valid two-dimensional JSON array containing the texts to be translated, the output should follow this array structure.\n- Contextual definition: {context}\n- Translate the texts in JSON into {target_lang}, ensuring you preserve the original meaning, tone, style, format, Return only the translated result in a valid JSON array."))
+        .content(format!("Guidelines:\n- Become proficient in {languages}.\n- Instead of prompts, user input is a valid two-dimensional JSON array containing the texts to be translated, the output should follow this array structure.\n- Contextual definition: {context}\n- Translate the texts in JSON into {target_lang}, ensuring you preserve the original meaning, tone, style, format, Return only the full translated result without omission in JSON."))
         .build().map_err(HTTPError::with_500)?;
 
         let system_messages: Vec<ChatCompletionRequestMessage> = vec![&system_message]
