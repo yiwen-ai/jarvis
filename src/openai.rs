@@ -61,8 +61,8 @@ impl AIModel {
     // return (recommend, high)
     pub fn translating_segment_tokens(&self) -> (usize, usize) {
         match self {
-            AIModel::GPT3_5 => (3000, 3200),
-            AIModel::GPT4 => (3000, 3200),
+            AIModel::GPT3_5 => (2600, 3200),
+            AIModel::GPT4 => (2600, 3200),
         }
     }
 
